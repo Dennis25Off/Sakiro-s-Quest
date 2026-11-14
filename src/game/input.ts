@@ -9,6 +9,7 @@ export interface UnifiedInput {
   parryJustPressed: boolean;
   dodgePressed: boolean;
   jumpPressed: boolean;
+  bowPressed: boolean;
   timeSlowPressed: boolean;
   lockOnPressed: boolean;
   pausePressed: boolean;
@@ -24,6 +25,7 @@ export class InputManager {
   private pendingParry = false;
   private pendingDodge = false;
   private pendingJump = false;
+  private pendingBow = false;
   private pendingTimeSlow = false;
   private pendingLockOn = false;
   private pendingPause = false;
@@ -61,6 +63,9 @@ export class InputManager {
     if (e.code === 'Space') {
       e.preventDefault();
       this.pendingJump = true;
+    }
+    if (e.code === 'KeyG') {
+      this.pendingBow = true;
     }
     if (e.code === 'KeyT') {
       this.pendingTimeSlow = true;
@@ -182,6 +187,7 @@ export class InputManager {
     this.pendingParry = false;
     this.pendingDodge = false;
     this.pendingJump = false;
+    this.pendingBow = false;
     this.pendingTimeSlow = false;
     this.pendingLockOn = false;
     this.pendingPause = false;
@@ -225,6 +231,7 @@ export class InputManager {
     let parryJustPressed = this.pendingParry;
     let dodgePressed = this.pendingDodge;
     let jumpPressed = this.pendingJump;
+    let bowPressed = this.pendingBow;
     let timeSlowPressed = this.pendingTimeSlow;
     let lockOnPressed = this.pendingLockOn;
     let pausePressed = this.pendingPause;
@@ -234,6 +241,7 @@ export class InputManager {
     this.pendingParry = false;
     this.pendingDodge = false;
     this.pendingJump = false;
+    this.pendingBow = false;
     this.pendingTimeSlow = false;
     this.pendingLockOn = false;
     this.pendingPause = false;
@@ -273,6 +281,7 @@ export class InputManager {
       // LB / L1 (4) or LT (6) -> Block / Parry
       // RB / R1 (5) or R3 (11) -> Lock-On
       // D-Pad Up (12) or L3 (10) -> Time Slow (Cronostasi)
+      // D-Pad Right (15) -> Bow Shot (Arco)
       // Start (9) -> Pause
       if (this.isGameplayActive) {
         if (just(0)) jumpPressed = true;
@@ -281,6 +290,7 @@ export class InputManager {
         if (just(3)) heavyAttackPressed = true;
         if (just(5) || just(11)) lockOnPressed = true;
         if (just(12) || just(10)) timeSlowPressed = true;
+        if (just(15)) bowPressed = true;
       }
       if (just(9)) pausePressed = true;
 
@@ -320,6 +330,7 @@ export class InputManager {
       parryJustPressed,
       dodgePressed,
       jumpPressed,
+      bowPressed,
       timeSlowPressed,
       lockOnPressed,
       pausePressed,

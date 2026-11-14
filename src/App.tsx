@@ -35,6 +35,8 @@ const INITIAL_HUD: HudSnapshot = {
   timeSlowActive: false,
   timeSlowRemaining: 0,
   timeSlowCooldown: 0,
+  bowUnlocked: false,
+  bowCooldown: 0,
   levelIndex: 0,
   levelTitle: LEVELS[0].title,
   checkpointIndex: 0,
@@ -119,6 +121,7 @@ export default function App() {
         updateSave((prev) => {
           const nextLevel = Math.min(LEVELS.length - 1, completedIndex + 1);
           const unlockedTimeSlow = prev.timeSlowUnlocked || completedIndex >= 4;
+          const unlockedBow = prev.bowUnlocked || completedIndex >= 4;
           const finishedFullStory = completedIndex >= LEVELS.length - 1;
           return {
             ...prev,
@@ -127,6 +130,7 @@ export default function App() {
             unlockedLevel: Math.max(prev.unlockedLevel, nextLevel),
             storyCompleted: prev.storyCompleted || finishedFullStory,
             timeSlowUnlocked: unlockedTimeSlow,
+            bowUnlocked: unlockedBow,
           };
         });
       },
@@ -140,6 +144,10 @@ export default function App() {
       saveRef.current.unlockedLevel >= 1 || saveRef.current.levelIndex >= 1,
       saveRef.current.discoveredCombos,
       saveRef.current.timeSlowUnlocked || saveRef.current.storyCompleted,
+      saveRef.current.bowUnlocked ||
+        saveRef.current.storyCompleted ||
+        saveRef.current.unlockedLevel >= 5 ||
+        saveRef.current.levelIndex >= 5,
     );
     engine.loadLevel(saveRef.current.levelIndex, saveRef.current.checkpointIndex, true);
     engine.setScreenMode('menu');
@@ -327,6 +335,10 @@ export default function App() {
           save.unlockedLevel >= 1 || save.levelIndex >= 1,
           save.discoveredCombos,
           save.timeSlowUnlocked || save.storyCompleted || save.levelIndex >= 5,
+          save.bowUnlocked ||
+            save.storyCompleted ||
+            save.unlockedLevel >= 5 ||
+            save.levelIndex >= 5,
         );
         eng.loadLevel(save.levelIndex, save.checkpointIndex, false);
         eng.setScreenMode('playing');
@@ -346,7 +358,7 @@ export default function App() {
         setSave(fresh);
         const eng = engineRef.current;
         if (!eng) return;
-        eng.setProgressionState(false, [], false);
+        eng.setProgressionState(false, [], false, false);
         eng.loadLevel(0, 0, false);
         eng.setScreenMode('playing');
         setScreen('playing');
@@ -373,6 +385,10 @@ export default function App() {
           saveRef.current.unlockedLevel >= 1 || levelIndex >= 1,
           saveRef.current.discoveredCombos,
           saveRef.current.timeSlowUnlocked || saveRef.current.storyCompleted || levelIndex >= 5,
+          saveRef.current.bowUnlocked ||
+            saveRef.current.storyCompleted ||
+            saveRef.current.unlockedLevel >= 5 ||
+            levelIndex >= 5,
         );
         eng.loadLevel(levelIndex, 0, false);
         eng.setScreenMode('playing');
@@ -431,6 +447,10 @@ export default function App() {
           save.unlockedLevel >= 1 || save.levelIndex >= 1,
           save.discoveredCombos,
           save.timeSlowUnlocked || save.storyCompleted || save.levelIndex >= 5,
+          save.bowUnlocked ||
+            save.storyCompleted ||
+            save.unlockedLevel >= 5 ||
+            save.levelIndex >= 5,
         );
         eng.loadLevel(save.levelIndex, save.checkpointIndex, false);
         eng.setScreenMode('playing');

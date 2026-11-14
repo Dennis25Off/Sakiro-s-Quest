@@ -32,10 +32,14 @@ export const GameHud: React.FC<GameHudProps> = ({ hud, onPause }) => {
 
   const chronoReady = hud.timeSlowUnlocked && !hud.timeSlowActive && hud.timeSlowCooldown <= 0;
   const chronoBarPct = hud.timeSlowActive
-    ? (hud.timeSlowRemaining / 3.0) * 100
+    ? (hud.timeSlowRemaining / 4.0) * 100
     : hud.timeSlowCooldown > 0
       ? ((30 - hud.timeSlowCooldown) / 30) * 100
       : 100;
+
+  const bowReady = hud.bowUnlocked && hud.bowCooldown <= 0;
+  const bowBarPct =
+    hud.bowCooldown > 0 ? ((10 - hud.bowCooldown) / 10) * 100 : 100;
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-5 lg:p-7">
@@ -205,8 +209,37 @@ export const GameHud: React.FC<GameHudProps> = ({ hud, onPause }) => {
 
       {/* BOTTOM ROW: Player Vitals Left, Story Subtitles Bottom-Center, Controls Right */}
       <div className="relative flex items-end justify-between gap-4 lg:gap-6">
-        {/* Player Vital Bars, Cronostasi & Minimal Combo Tracker (Bottom-Left) */}
+        {/* Player Vital Bars, Arco, Cronostasi & Minimal Combo Tracker (Bottom-Left) */}
         <div className="flex flex-col gap-1.5 shrink-0">
+          {hud.bowUnlocked && (
+            <div
+              className={`px-3.5 py-2 border ${
+                bowReady
+                  ? 'bg-[#F8FAFC]/92 border-[#D97706] text-[#12161F]'
+                  : 'bg-[#F8FAFC]/88 border-[#D4DCE6] text-[#475569]'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-3 text-[11px]">
+                <span className="font-display font-bold tracking-wider">ARCO</span>
+                <span className="font-mono-nums font-semibold">
+                  {bowReady
+                    ? hud.gamepadConnected
+                      ? 'PRONTO · → D-Pad'
+                      : 'PRONTO · G'
+                    : `RICARICA ${hud.bowCooldown}s`}
+                </span>
+              </div>
+              <div className="h-1 w-full bg-[#CBD5E1]/50 mt-1 overflow-hidden">
+                <div
+                  className={`h-full transition-all duration-100 ${
+                    bowReady ? 'bg-[#D97706]' : 'bg-[#94A3B8]'
+                  }`}
+                  style={{ width: `${Math.max(0, Math.min(100, bowBarPct))}%` }}
+                />
+              </div>
+            </div>
+          )}
+
           {hud.timeSlowUnlocked && (
             <div
               className={`px-3.5 py-2 border ${
@@ -380,6 +413,9 @@ export const GameHud: React.FC<GameHudProps> = ({ hud, onPause }) => {
                     {hud.timeSlowUnlocked && (
                       <span className="font-semibold text-[#0284C7]">↑ / L3 · Tempo</span>
                     )}
+                    {hud.bowUnlocked && (
+                      <span className="font-semibold text-[#D97706]">→ D-Pad · Arco</span>
+                    )}
                   </>
                 ) : (
                   <>
@@ -392,6 +428,9 @@ export const GameHud: React.FC<GameHudProps> = ({ hud, onPause }) => {
                     <span>Tab · Aggancia</span>
                     {hud.timeSlowUnlocked && (
                       <span className="font-semibold text-[#0284C7]">T · Tempo</span>
+                    )}
+                    {hud.bowUnlocked && (
+                      <span className="font-semibold text-[#D97706]">G · Arco</span>
                     )}
                   </>
                 )}

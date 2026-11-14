@@ -23,6 +23,7 @@ export interface SaveData {
   defeatsTotal: number;
   storyCompleted: boolean;
   timeSlowUnlocked: boolean;
+  bowUnlocked: boolean;
   discoveredCombos: SecretComboId[];
   updatedAt: number;
 }
@@ -149,6 +150,8 @@ export interface HudSnapshot {
   timeSlowActive: boolean;
   timeSlowRemaining: number;
   timeSlowCooldown: number;
+  bowUnlocked: boolean;
+  bowCooldown: number;
   levelIndex: number;
   levelTitle: string;
   checkpointIndex: number;

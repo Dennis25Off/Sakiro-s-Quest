@@ -54,6 +54,8 @@ export const StartMenu: React.FC<StartMenuProps> = ({
   const canContinue = hasExistingProgress(save);
   const chronoUnlocked =
     save.timeSlowUnlocked || save.storyCompleted || save.unlockedLevel >= 5;
+  const bowUnlocked =
+    save.bowUnlocked || save.storyCompleted || save.unlockedLevel >= 5;
   const visibleLevels = LEVELS;
 
   const safeLevelIndex = Math.min(save.levelIndex, LEVELS.length - 1);
@@ -281,7 +283,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                   <span aria-hidden="true"> · </span>
                   <span>
                     {currentLevelSpec.checkpoints.length} Checkpoint
-                    {chronoUnlocked ? ' · Cronostasi sbloccata' : ''}
+                    {chronoUnlocked ? ' · Cronostasi & Arco' : ''}
                   </span>
                 </div>
                 <button
@@ -404,8 +406,14 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                 </div>
                 {chronoUnlocked && (
                   <div className="flex justify-between py-1.5 border-b border-[#E2E8F0]">
-                    <span className="text-[#0284C7] font-medium">Cronostasi (3s)</span>
+                    <span className="text-[#0284C7] font-medium">Cronostasi (4s)</span>
                     <span className="font-mono-nums font-semibold text-[#0284C7]">T / ↑ D-Pad / L3</span>
+                  </div>
+                )}
+                {bowUnlocked && (
+                  <div className="flex justify-between py-1.5 border-b border-[#E2E8F0]">
+                    <span className="text-[#D97706] font-medium">Arco di Sakiro (10s)</span>
+                    <span className="font-mono-nums font-semibold text-[#D97706]">G / → D-Pad</span>
                   </div>
                 )}
                 <div className="flex justify-between py-1.5 border-b border-[#E2E8F0]">

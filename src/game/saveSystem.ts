@@ -21,6 +21,7 @@ export function createDefaultSave(): SaveData {
     defeatsTotal: 0,
     storyCompleted: false,
     timeSlowUnlocked: false,
+    bowUnlocked: false,
     discoveredCombos: [],
     updatedAt: Date.now(),
   };
@@ -41,6 +42,8 @@ export function loadSaveData(): SaveData {
     const storyCompleted = Boolean(parsed.storyCompleted);
     const timeSlowUnlocked =
       Boolean(parsed.timeSlowUnlocked) || unlockedLevel >= 5 || storyCompleted;
+    const bowUnlocked =
+      Boolean(parsed.bowUnlocked) || unlockedLevel >= 5 || storyCompleted;
 
     return {
       version: SAVE_VERSION,
@@ -52,6 +55,7 @@ export function loadSaveData(): SaveData {
       defeatsTotal: Math.max(0, Number(parsed.defeatsTotal ?? 0)),
       storyCompleted,
       timeSlowUnlocked,
+      bowUnlocked,
       discoveredCombos: Array.from(new Set(discovered)),
       updatedAt: Number(parsed.updatedAt ?? Date.now()),
     };
@@ -86,7 +90,8 @@ export function hasExistingProgress(save: SaveData): boolean {
     save.parriesTotal > 0 ||
     save.defeatsTotal > 0 ||
     save.storyCompleted ||
-    save.timeSlowUnlocked
+    save.timeSlowUnlocked ||
+    save.bowUnlocked
   );
 }
 

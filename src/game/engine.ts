@@ -11,6 +11,7 @@ import {
   createEnemySamuraiRig,
   createHeroSamuraiRig,
   createNeoToriiGate,
+  createRuinedToriiGate,
 } from './models';
 import { createMaterialLibrary, GameMaterialLibrary } from './textures';
 import {
@@ -52,7 +53,8 @@ type AttackVariant =
   | 'iai_counter'
   | 'tempest_whirl'
   | 'shadow_pierce'
-  | 'eclipse_judgment';
+  | 'eclipse_judgment'
+  | 'bow_shot';
 
 interface SparkParticle {
   active: boolean;
@@ -121,6 +123,17 @@ interface BossArrow {
   life: number;
   reflected: boolean;
   owner: ActiveEnemy;
+}
+
+interface HeroArrow {
+  group: THREE.Group;
+  coreMat: THREE.MeshBasicMaterial;
+  pos: THREE.Vector3;
+  dir: THREE.Vector3;
+  speed: number;
+  damage: number;
+  postureDmg: number;
+  life: number;
 }
 
 interface BossBomb {
@@ -221,6 +234,8 @@ export class SamuraiGameEngine {
   private vfxGroup = new THREE.Group();
   private dirLight!: THREE.DirectionalLight;
   private hemiLight!: THREE.HemisphereLight;
+  private infernoLight: THREE.PointLight | null = null;
+  private isInfernalLevel = false;
 
   // Player state
   private heroRig!: ArticulatedSamuraiRig;
@@ -248,6 +263,8 @@ export class SamuraiGameEngine {
   private timeSlowUnlocked = false;
   private timeSlowTimer = 0;
   private timeSlowCooldown = 0;
+  private bowUnlocked = false;
+  private bowCooldown = 0;
   private playerVelY = 0;
   private isGrounded = true;
   private lastSafePos = new THREE.Vector3(0, 0, 6);
@@ -291,6 +308,7 @@ export class SamuraiGameEngine {
   private magicOrbs: MagicOrb[] = [];
   private meteors: MeteorStrike[] = [];
   private bossArrows: BossArrow[] = [];
+  private heroArrows: HeroArrow[] = [];
   private bossBombs: BossBomb[] = [];
   private crossBladeGeo!: THREE.BoxGeometry;
   private crossCoreGeo!: THREE.BoxGeometry;
@@ -428,6 +446,10 @@ export class SamuraiGameEngine {
     const rimLight = new THREE.DirectionalLight(0xdbeafe, 0.7);
     rimLight.position.set(-14, 12, -18);
     this.scene.add(rimLight);
+
+    this.infernoLight = new THREE.PointLight(0xff4d1a, 0, 68, 1.35);
+    this.infernoLight.position.set(0, 5.5, -24);
+    this.scene.add(this.infernoLight);
 
     this.scene.add(this.levelGroup);
     this.scene.add(this.actorGroup);
@@ -679,10 +701,12 @@ export class SamuraiGameEngine {
     combosUnlocked: boolean,
     discoveredCombos: SecretComboId[],
     timeSlowUnlocked = false,
+    bowUnlocked = false,
   ): void {
     this.combosUnlocked = combosUnlocked || this.currentLevelIndex >= 1;
     this.discoveredCombos = new Set(discoveredCombos);
     this.timeSlowUnlocked = timeSlowUnlocked || this.currentLevelIndex >= 5;
+    this.bowUnlocked = bowUnlocked || this.currentLevelIndex >= 5;
     this.emitHud();
   }
 
@@ -698,14 +722,39 @@ export class SamuraiGameEngine {
     }
     if (clampedLevel >= 5) {
       this.timeSlowUnlocked = true;
+      this.bowUnlocked = true;
     }
 
     // Clear previous level objects
     this.clearLevelObjects();
 
-    // Scene sky & fog
+    // Scene sky, fog & dynamic daylight vs infernal lighting
+    this.isInfernalLevel =
+      spec.themeStyle === 'eclipse_abyss' || spec.themeStyle === 'final_sanctum';
     this.scene.background = new THREE.Color(spec.skyColor);
     this.scene.fog = new THREE.FogExp2(spec.fogColor, spec.fogDensity);
+
+    if (this.isInfernalLevel) {
+      this.hemiLight.color.setHex(0x7c1d2a);
+      this.hemiLight.groundColor.setHex(0x3f1208);
+      this.hemiLight.intensity = 1.05;
+      this.dirLight.color.setHex(0xffb494);
+      this.dirLight.intensity = 1.95;
+      if (this.infernoLight) {
+        this.infernoLight.color.setHex(spec.index === 9 ? 0xff6b1a : 0xe12d39);
+        this.infernoLight.intensity = 22;
+        this.infernoLight.position.set(0, 5.5, -24);
+      }
+    } else {
+      this.hemiLight.color.setHex(0xf0f6ff);
+      this.hemiLight.groundColor.setHex(0xc7d2de);
+      this.hemiLight.intensity = 0.85;
+      this.dirLight.color.setHex(0xfff6e5);
+      this.dirLight.intensity = 1.85;
+      if (this.infernoLight) {
+        this.infernoLight.intensity = 0;
+      }
+    }
 
     this.buildLevelEnvironment(spec);
 
@@ -756,6 +805,7 @@ export class SamuraiGameEngine {
     this.postDodgeTimer = 0;
     this.timeSlowTimer = 0;
     this.timeSlowCooldown = 0;
+    this.bowCooldown = 0;
     this.lockedEnemyId = null;
     this.camYaw = 0;
     this.camPitch = 0.27;
@@ -824,6 +874,11 @@ export class SamuraiGameEngine {
       arr.coreMat.dispose();
     }
     this.bossArrows = [];
+    for (const arr of this.heroArrows) {
+      this.vfxGroup.remove(arr.group);
+      arr.coreMat.dispose();
+    }
+    this.heroArrows = [];
     for (const bomb of this.bossBombs) {
       this.vfxGroup.remove(bomb.mesh, bomb.ringMesh, bomb.fillMesh);
       bomb.bombMat.dispose();
@@ -910,6 +965,8 @@ export class SamuraiGameEngine {
     const backZ = -spec.lengthZ - 18;
 
     // Main walkway + courtyard floor (split into two halves if mid-level Parkour chasm is present)
+    const isInfernal = spec.themeStyle === 'eclipse_abyss' || spec.themeStyle === 'final_sanctum';
+
     if (spec.parkour) {
       const { gapZStart, gapZEnd, platforms } = spec.parkour;
       this.parkourGap = { zMin: gapZEnd, zMax: gapZStart };
@@ -1014,26 +1071,40 @@ export class SamuraiGameEngine {
       mainFloor.receiveShadow = true;
       this.levelGroup.add(mainFloor);
 
-      const conduitGeo = new THREE.PlaneGeometry(0.12, totalDepth - 8);
-      [-1.4, 1.4].forEach((cx) => {
-        const strip = new THREE.Mesh(conduitGeo, conduitMat);
-        strip.rotation.x = -Math.PI / 2;
-        strip.position.set(cx, 0.008, (frontZ + backZ) / 2);
-        this.levelGroup.add(strip);
-      });
+      if (isInfernal) {
+        // Jagged glowing magma fissures carved into the shattered arena floor
+        for (let k = 0; k < 14; k++) {
+          const zPos = 14 - k * 7.2;
+          const xPos = ((k % 2 === 0 ? -1 : 1) * (4.5 + (k % 3) * 3.1));
+          const crack = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.24 + (k % 3) * 0.1, 4.6 + (k % 2) * 2.2),
+            this.mats.emberCrack,
+          );
+          crack.rotation.x = -Math.PI / 2;
+          crack.rotation.z = ((k % 5) - 2) * 0.34;
+          crack.position.set(xPos, 0.012, zPos);
+          this.levelGroup.add(crack);
+        }
+      } else {
+        const conduitGeo = new THREE.PlaneGeometry(0.12, totalDepth - 8);
+        [-1.4, 1.4].forEach((cx) => {
+          const strip = new THREE.Mesh(conduitGeo, conduitMat);
+          strip.rotation.x = -Math.PI / 2;
+          strip.position.set(cx, 0.008, (frontZ + backZ) / 2);
+          this.levelGroup.add(strip);
+        });
+      }
     }
 
-    // Outer valley terrain + scenic winding/flanking streams (ruscelli)
+    // Outer valley terrain + scenic winding/flanking streams (ruscelli or molten lava in Levels 6 & 10)
     if (spec.themeStyle !== 'jade_bridge' && spec.themeStyle !== 'astral_zenith') {
       const darkGround =
-        spec.themeStyle === 'eclipse_abyss' ||
-        spec.themeStyle === 'crimson_citadel' ||
-        spec.themeStyle === 'final_sanctum';
+        isInfernal || spec.themeStyle === 'crimson_citadel';
       const groundMat = darkGround
         ? new THREE.MeshStandardMaterial({
-            color: spec.themeStyle === 'final_sanctum' ? 0x14111d : 0x1b1929,
-            roughness: 0.85,
-            metalness: 0.1,
+            color: isInfernal ? 0x10070a : 0x1b1929,
+            roughness: 0.9,
+            metalness: 0.08,
           })
         : this.mats.stoneTrim;
       const outerGround = new THREE.Mesh(new THREE.PlaneGeometry(360, 360), groundMat);
@@ -1043,7 +1114,7 @@ export class SamuraiGameEngine {
       this.levelGroup.add(outerGround);
     }
 
-    // Flanking scenic streams (ruscelli) running along both sides of the sanctuary
+    // Flanking scenic streams (molten lava rivers in Levels 6 & 10, clear water otherwise)
     const streamLen = spec.lengthZ + 68;
     const streamOffsetX = spec.widthX / 2 + 4.8;
     const streamY =
@@ -1055,26 +1126,26 @@ export class SamuraiGameEngine {
 
     [-streamOffsetX, streamOffsetX].forEach((sx) => {
       const streamPlane = new THREE.Mesh(
-        new THREE.PlaneGeometry(4.4, streamLen),
-        this.mats.streamWater,
+        new THREE.PlaneGeometry(isInfernal ? 5.2 : 4.4, streamLen),
+        isInfernal ? this.mats.lavaStream : this.mats.streamWater,
       );
       streamPlane.rotation.x = -Math.PI / 2;
       streamPlane.position.set(sx, streamY, -spec.lengthZ / 2 + 6);
       this.levelGroup.add(streamPlane);
 
       // Riverbank stones framing each stream
-      [-2.35, 2.35].forEach((bankOff) => {
+      [-2.45, 2.45].forEach((bankOff) => {
         const bank = new THREE.Mesh(
-          new THREE.BoxGeometry(0.95, 0.65, streamLen),
-          this.mats.stoneTrim,
+          new THREE.BoxGeometry(1.1, isInfernal ? 0.85 : 0.65, streamLen),
+          isInfernal ? this.mats.charredStone : this.mats.stoneTrim,
         );
-        bank.position.set(sx + bankOff, streamY - 0.12, -spec.lengthZ / 2 + 6);
+        bank.position.set(sx + bankOff, streamY - 0.1, -spec.lengthZ / 2 + 6);
         bank.receiveShadow = true;
         this.levelGroup.add(bank);
       });
     });
 
-    // Architectural low stone balustrades along both edges (leaving parkour chasm visually open)
+    // Architectural stone balustrades (shattered/broken segments in infernal Levels 6 & 10)
     if (spec.parkour) {
       const { gapZStart, gapZEnd } = spec.parkour;
       const seg1Len = frontZ - gapZStart - 2;
@@ -1092,6 +1163,26 @@ export class SamuraiGameEngine {
         r2.receiveShadow = true;
         this.levelGroup.add(r2);
       });
+    } else if (isInfernal) {
+      // Broken, tilted, gapped perimeter wall fragments + scorched rubble chunks
+      [-spec.widthX / 2 + 0.4, spec.widthX / 2 - 0.4].forEach((edgeX, sideIdx) => {
+        for (let s = 0; s < 10; s++) {
+          if ((s + sideIdx) % 3 === 1) continue; // Wide blown-out gaps in the walls
+          const zSeg = 18 - s * 10.6;
+          const segLen = 4.2 + ((s * 3) % 3) * 1.4;
+          const segH = 0.45 + ((s + sideIdx) % 3) * 0.28;
+          const wallFrag = new THREE.Mesh(
+            new THREE.BoxGeometry(0.75, segH, segLen),
+            this.mats.charredStone,
+          );
+          wallFrag.position.set(edgeX + (sideIdx === 0 ? -0.1 : 0.1), segH / 2 - 0.04, zSeg);
+          wallFrag.rotation.z = (sideIdx === 0 ? 1 : -1) * (((s % 3) - 1) * 0.14);
+          wallFrag.rotation.y = ((s % 2 === 0 ? 1 : -1) * 0.08);
+          wallFrag.castShadow = true;
+          wallFrag.receiveShadow = true;
+          this.levelGroup.add(wallFrag);
+        }
+      });
     } else {
       const railGeo = new THREE.BoxGeometry(0.65, 0.72, frontZ - backZ - 4);
       [-spec.widthX / 2 + 0.35, spec.widthX / 2 - 0.35].forEach((x) => {
@@ -1108,26 +1199,38 @@ export class SamuraiGameEngine {
     const bossRingZ = isBossArenaOnly ? -26 : -spec.lengthZ + 18;
     const bossRingGeo = new THREE.RingGeometry(isBossArenaOnly ? 8.2 : 5.8, isBossArenaOnly ? 8.6 : 6.1, 42);
     bossRingGeo.rotateX(-Math.PI / 2);
-    const bossRing = new THREE.Mesh(bossRingGeo, conduitMat);
-    bossRing.position.set(0, 0.01, bossRingZ);
+    const bossRing = new THREE.Mesh(bossRingGeo, isInfernal ? this.mats.emberCrack : conduitMat);
+    bossRing.position.set(0, 0.015, bossRingZ);
     this.levelGroup.add(bossRing);
 
-    // Floating Halo Ring overhead in Astral Zenith (Act 5), Eclipse Abyss (Act 6), and Final Sanctum (Act 10)
-    if (
+    // Overhead Halo: shattered burning eclipse arcs in infernal Levels 6 & 10, intact halo in Act 5 & Act 9
+    if (isInfernal) {
+      const shardMat = new THREE.MeshBasicMaterial({
+        color: spec.themeStyle === 'final_sanctum' ? 0xf97316 : 0xe12d39,
+        transparent: true,
+        opacity: 0.84,
+      });
+      [
+        { arc: Math.PI * 0.62, rotZ: 0.25, tiltX: Math.PI / 2 - 0.28, y: 8.6 },
+        { arc: Math.PI * 0.48, rotZ: 2.35, tiltX: Math.PI / 2 + 0.14, y: 7.5 },
+        { arc: Math.PI * 0.42, rotZ: 4.35, tiltX: Math.PI / 2 - 0.42, y: 9.2 },
+      ].forEach((s) => {
+        const shard = new THREE.Mesh(
+          new THREE.TorusGeometry(9.8, 0.22, 8, 22, s.arc),
+          shardMat,
+        );
+        shard.position.set(0, s.y, bossRingZ);
+        shard.rotation.set(s.tiltX, 0.18, s.rotZ);
+        this.levelGroup.add(shard);
+      });
+    } else if (
       spec.themeStyle === 'astral_zenith' ||
-      spec.themeStyle === 'eclipse_abyss' ||
-      spec.themeStyle === 'crimson_citadel' ||
-      spec.themeStyle === 'final_sanctum'
+      spec.themeStyle === 'crimson_citadel'
     ) {
       const skyHalo = new THREE.Mesh(
-        new THREE.TorusGeometry(isBossArenaOnly ? 9.6 : 6.8, 0.16, 12, 48),
+        new THREE.TorusGeometry(6.8, 0.16, 12, 48),
         new THREE.MeshBasicMaterial({
-          color:
-            spec.themeStyle === 'final_sanctum'
-              ? 0xf59e0b
-              : spec.themeStyle === 'eclipse_abyss' || spec.themeStyle === 'crimson_citadel'
-                ? 0xe12d39
-                : 0x8b5cf6,
+          color: spec.themeStyle === 'crimson_citadel' ? 0xe12d39 : 0x8b5cf6,
           transparent: true,
           opacity: 0.74,
         }),
@@ -1137,45 +1240,115 @@ export class SamuraiGameEngine {
       this.levelGroup.add(skyHalo);
     }
 
-    // Neo-Torii Gates framing checkpoints and boss threshold
+    // Neo-Torii Gates (shattered & ruined in infernal Levels 6 & 10)
     const toriiZs = isBossArenaOnly ? [2, -spec.lengthZ + 6] : [2, -36, -78, -spec.lengthZ + 6];
     toriiZs.forEach((z, i) => {
-      const torii = createNeoToriiGate(this.mats, i === toriiZs.length - 1 ? 1.25 : 1.0, accentMat);
+      const torii = isInfernal
+        ? createRuinedToriiGate(this.mats, i === toriiZs.length - 1 ? 1.28 : 1.04, i)
+        : createNeoToriiGate(this.mats, i === toriiZs.length - 1 ? 1.25 : 1.0, accentMat);
       torii.position.set(0, 0, z);
       this.levelGroup.add(torii);
     });
 
-    // Instanced Architectural Pillars / Stone Lanterns along the avenue
-    const pillarCount = isBossArenaOnly ? 14 : 24;
-    const pillarGeo = new THREE.CylinderGeometry(0.24, 0.32, 3.2, 8);
-    const pillarInst = new THREE.InstancedMesh(pillarGeo, this.mats.brushedTitanium, pillarCount);
-    pillarInst.castShadow = true;
-    pillarInst.receiveShadow = true;
-    let pIdx = 0;
-    for (let i = 0; i < pillarCount / 2; i++) {
-      const z = 4 - i * 11.5;
-      [-spec.widthX / 2 + 1.5, spec.widthX / 2 - 1.5].forEach((x) => {
-        _targetPos.set(x, 1.6, z);
-        _quat.identity();
-        const s = 0.92 + ((i * 7) % 5) * 0.04;
-        _scale.set(s, s, s);
-        _mat4.compose(_targetPos, _quat, _scale);
-        pillarInst.setMatrixAt(pIdx++, _mat4);
-      });
-    }
-    pillarInst.instanceMatrix.needsUpdate = true;
-    pillarInst.computeBoundingSphere();
-    this.levelGroup.add(pillarInst);
+    // Architectural Pillars (shattered stumps + fallen broken drums & glowing craters in Levels 6 & 10)
+    if (isInfernal) {
+      const stumpCount = 16;
+      const stumpGeo = new THREE.CylinderGeometry(0.28, 0.36, 2.2, 7);
+      const stumpInst = new THREE.InstancedMesh(stumpGeo, this.mats.charredStone, stumpCount);
+      stumpInst.castShadow = true;
+      stumpInst.receiveShadow = true;
 
-    // Instanced Distant Mountain Peaks (multi-layered horizon silhouette)
+      const debrisCount = 26;
+      const debrisGeo = new THREE.DodecahedronGeometry(0.65, 0);
+      const debrisInst = new THREE.InstancedMesh(debrisGeo, this.mats.charredStone, debrisCount);
+      debrisInst.castShadow = true;
+      debrisInst.receiveShadow = true;
+
+      let sIdx = 0;
+      for (let i = 0; i < stumpCount / 2; i++) {
+        const z = 6 - i * 11.2;
+        [-spec.widthX / 2 + 1.8, spec.widthX / 2 - 1.8].forEach((x, side) => {
+          const hScale = 0.48 + ((i * 5 + side * 3) % 5) * 0.22;
+          _targetPos.set(x, hScale * 1.0, z);
+          _euler.set(((i % 3) - 1) * 0.12, i * 0.8, (side === 0 ? -1 : 1) * (0.08 + (i % 2) * 0.1));
+          _quat.setFromEuler(_euler);
+          _scale.set(1.05, hScale, 1.05);
+          _mat4.compose(_targetPos, _quat, _scale);
+          stumpInst.setMatrixAt(sIdx++, _mat4);
+        });
+      }
+      stumpInst.instanceMatrix.needsUpdate = true;
+      stumpInst.computeBoundingSphere();
+      this.levelGroup.add(stumpInst);
+
+      // Fallen shattered rocks & rubble lining the devastated battlefield edges
+      for (let i = 0; i < debrisCount; i++) {
+        const side = i % 2 === 0 ? -1 : 1;
+        const dx = side * (spec.widthX / 2 - 2.3 + ((i * 7) % 4) * 0.75);
+        const dz = 10 - i * 3.4;
+        const sc = 0.55 + ((i * 11) % 7) * 0.14;
+        _targetPos.set(dx, sc * 0.32, dz);
+        _euler.set(i * 0.7, i * 1.1, i * 0.5);
+        _quat.setFromEuler(_euler);
+        _scale.set(sc * 1.25, sc * 0.75, sc);
+        _mat4.compose(_targetPos, _quat, _scale);
+        debrisInst.setMatrixAt(i, _mat4);
+      }
+      debrisInst.instanceMatrix.needsUpdate = true;
+      debrisInst.computeBoundingSphere();
+      this.levelGroup.add(debrisInst);
+
+      // Scorch blast craters with glowing magma centers along arena flanks
+      const craterRingGeo = new THREE.RingGeometry(1.15, 1.75, 14);
+      craterRingGeo.rotateX(-Math.PI / 2);
+      const craterCoreGeo = new THREE.CircleGeometry(1.15, 12);
+      craterCoreGeo.rotateX(-Math.PI / 2);
+      [
+        [-11.5, -10],
+        [11.8, -18],
+        [-12.2, -34],
+        [11.5, -44],
+        [-10.8, -56],
+        [12.0, -62],
+      ].forEach(([cx, cz]) => {
+        const rim = new THREE.Mesh(craterRingGeo, this.mats.charredStone);
+        rim.position.set(cx, 0.03, cz);
+        this.levelGroup.add(rim);
+
+        const core = new THREE.Mesh(craterCoreGeo, this.mats.emberCrack);
+        core.position.set(cx, 0.02, cz);
+        this.levelGroup.add(core);
+      });
+    } else {
+      const pillarCount = 24;
+      const pillarGeo = new THREE.CylinderGeometry(0.24, 0.32, 3.2, 8);
+      const pillarInst = new THREE.InstancedMesh(pillarGeo, this.mats.brushedTitanium, pillarCount);
+      pillarInst.castShadow = true;
+      pillarInst.receiveShadow = true;
+      let pIdx = 0;
+      for (let i = 0; i < pillarCount / 2; i++) {
+        const z = 4 - i * 11.5;
+        [-spec.widthX / 2 + 1.5, spec.widthX / 2 - 1.5].forEach((x) => {
+          _targetPos.set(x, 1.6, z);
+          _quat.identity();
+          const s = 0.92 + ((i * 7) % 5) * 0.04;
+          _scale.set(s, s, s);
+          _mat4.compose(_targetPos, _quat, _scale);
+          pillarInst.setMatrixAt(pIdx++, _mat4);
+        });
+      }
+      pillarInst.instanceMatrix.needsUpdate = true;
+      pillarInst.computeBoundingSphere();
+      this.levelGroup.add(pillarInst);
+    }
+
+    // Instanced Distant Mountain Peaks (jagged volcanic spires in Levels 6 & 10)
     const darkHorizon =
-      spec.themeStyle === 'eclipse_abyss' ||
-      spec.themeStyle === 'crimson_citadel' ||
-      spec.themeStyle === 'final_sanctum';
+      isInfernal || spec.themeStyle === 'crimson_citadel';
     const peakCount = 28;
-    const peakGeo = new THREE.ConeGeometry(18, 44, 6);
+    const peakGeo = new THREE.ConeGeometry(isInfernal ? 15 : 18, isInfernal ? 50 : 44, isInfernal ? 5 : 6);
     const peakMat = new THREE.MeshStandardMaterial({
-      color: darkHorizon ? 0x2d2747 : 0xd1dce8,
+      color: isInfernal ? 0x260b10 : darkHorizon ? 0x2d2747 : 0xd1dce8,
       roughness: 0.92,
       metalness: 0.02,
     });
@@ -1194,110 +1367,151 @@ export class SamuraiGameEngine {
       _scale.set(sx, sy, sx);
       _mat4.compose(_targetPos, _quat, _scale);
       peakInst.setMatrixAt(i, _mat4);
-      const pColor = darkHorizon
+      const pColor = isInfernal
         ? i % 2 === 0
-          ? 0x312b4d
-          : 0x241f3a
-        : i % 2 === 0
-          ? 0xd2dde8
-          : 0xc6d4e3;
+          ? 0x2f0e14
+          : 0x1b070b
+        : darkHorizon
+          ? i % 2 === 0
+            ? 0x312b4d
+            : 0x241f3a
+          : i % 2 === 0
+            ? 0xd2dde8
+            : 0xc6d4e3;
       _color.setHex(pColor);
       peakInst.setColorAt(i, _color);
     }
     peakInst.instanceMatrix.needsUpdate = true;
     peakInst.computeBoundingSphere();
+    if (peakInst.instanceColor) peakInst.instanceColor.needsUpdate = true;
     this.levelGroup.add(peakInst);
 
-    // Instanced Distant Trees (Alberi in lontananza — trunks + multi-tone foliage canopies)
-    const treeCount = this.isLowEndMode() ? 48 : 80;
-    const trunkGeo = new THREE.CylinderGeometry(0.24, 0.42, 4.4, 6);
-    const canopyGeo = new THREE.DodecahedronGeometry(2.35, 0);
-    const trunkInst = new THREE.InstancedMesh(trunkGeo, this.mats.treeBark, treeCount);
-    const canopyInst = new THREE.InstancedMesh(canopyGeo, this.mats.treeCanopy, treeCount);
-    for (let i = 0; i < treeCount; i++) {
-      let tx = 0;
-      let tz = 0;
-      if (i < treeCount - 14) {
-        const side = i % 2 === 0 ? -1 : 1;
-        const lane = (i % 6) * 7.8;
-        tx = side * (spec.widthX / 2 + 10.5 + lane + ((i * 13) % 5));
-        tz = 18 - Math.floor(i / 2) * 5.8;
-      } else {
-        // Grove behind the boss temple horizon
-        const j = i - (treeCount - 14);
-        tx = (j - 6.5) * 8.5;
-        tz = -spec.lengthZ - 22 - (j % 4) * 8.5;
-      }
-      const baseY =
-        spec.themeStyle === 'jade_bridge'
-          ? -3.8
-          : spec.themeStyle === 'astral_zenith'
-            ? -2.8
-            : -1.85;
-      const scale = 0.85 + ((i * 17) % 10) * 0.085;
-      const yaw = (i * 1.17) % (Math.PI * 2);
-
-      _targetPos.set(tx, baseY + 2.1 * scale, tz);
-      _quat.setFromAxisAngle(_upAxis, yaw);
-      _scale.set(scale, scale, scale);
-      _mat4.compose(_targetPos, _quat, _scale);
-      trunkInst.setMatrixAt(i, _mat4);
-
-      _targetPos.set(tx, baseY + 4.9 * scale, tz);
-      _scale.set(scale * 1.15, scale * 0.92, scale * 1.15);
-      _mat4.compose(_targetPos, _quat, _scale);
-      canopyInst.setMatrixAt(i, _mat4);
-
-      let canopyHex = 0x5d9b79;
-      if (spec.themeStyle === 'dawn_shrine') {
-        canopyHex = i % 3 === 0 ? 0xf9a8d4 : i % 2 === 0 ? 0x6ba683 : 0x4f8a69;
-      } else if (spec.themeStyle === 'jade_bridge') {
-        canopyHex = i % 2 === 0 ? 0x2dd4bf : 0x0f766e;
-      } else if (spec.themeStyle === 'white_citadel') {
-        canopyHex = i % 3 === 0 ? 0xfda4af : i % 2 === 0 ? 0xf43f5e : 0x64748b;
-      } else if (spec.themeStyle === 'obsidian_garden') {
-        canopyHex = i % 2 === 0 ? 0x6366f1 : 0x4338ca;
-      } else if (spec.themeStyle === 'astral_zenith') {
-        canopyHex = i % 2 === 0 ? 0xa78bfa : 0x7c3aed;
-      } else if (spec.themeStyle === 'eclipse_abyss' || spec.themeStyle === 'crimson_citadel') {
-        canopyHex = i % 2 === 0 ? 0xbe123c : 0x4c1d95;
-      } else if (spec.themeStyle === 'ash_gorge') {
-        canopyHex = i % 2 === 0 ? 0xd97706 : 0x78716c;
-      } else if (spec.themeStyle === 'iron_bastion') {
-        canopyHex = i % 2 === 0 ? 0x64748b : 0x334155;
-      } else if (spec.themeStyle === 'final_sanctum') {
-        canopyHex = i % 3 === 0 ? 0xf59e0b : i % 2 === 0 ? 0xbe123c : 0x3b0764;
-      }
-      _color.setHex(canopyHex);
-      canopyInst.setColorAt(i, _color);
-    }
-    trunkInst.instanceMatrix.needsUpdate = true;
-    trunkInst.computeBoundingSphere();
-    canopyInst.instanceMatrix.needsUpdate = true;
-    canopyInst.computeBoundingSphere();
-    if (canopyInst.instanceColor) canopyInst.instanceColor.needsUpdate = true;
-    this.levelGroup.add(trunkInst, canopyInst);
-
-    // Instanced Bamboo / Blossom Groves near the flanking stream banks
-    if (spec.themeStyle !== 'jade_bridge' && spec.themeStyle !== 'astral_zenith') {
-      const bambooCount = 44;
-      const bambooGeo = new THREE.CylinderGeometry(0.11, 0.14, 7.5, 6);
-      const bambooInst = new THREE.InstancedMesh(bambooGeo, this.mats.bambooStalk, bambooCount);
-      for (let i = 0; i < bambooCount; i++) {
-        const side = i % 2 === 0 ? -1 : 1;
-        const x = side * (spec.widthX / 2 + 8.6 + (i % 4) * 1.9);
-        const z = 10 - Math.floor(i / 2) * 6.4;
-        _targetPos.set(x, 2.2, z);
-        _quat.setFromAxisAngle(_v1.set(0, 0, 1), side * 0.04 * ((i % 3) - 1));
-        const sc = 0.85 + (i % 4) * 0.12;
+    // Instanced Distant Trees (Dead charred skeletal trees in Levels 6 & 10, living trees elsewhere)
+    if (isInfernal) {
+      const deadTreeCount = this.isLowEndMode() ? 36 : 60;
+      const deadTrunkGeo = new THREE.CylinderGeometry(0.16, 0.42, 4.6, 5);
+      const deadBranchGeo = new THREE.CylinderGeometry(0.06, 0.14, 2.2, 5);
+      const deadTrunkInst = new THREE.InstancedMesh(deadTrunkGeo, this.mats.charredStone, deadTreeCount);
+      const deadBranchInst = new THREE.InstancedMesh(deadBranchGeo, this.mats.charredStone, deadTreeCount);
+      for (let i = 0; i < deadTreeCount; i++) {
+        let tx = 0;
+        let tz = 0;
+        if (i < deadTreeCount - 12) {
+          const side = i % 2 === 0 ? -1 : 1;
+          const lane = (i % 5) * 7.6;
+          tx = side * (spec.widthX / 2 + 10.5 + lane + ((i * 11) % 5));
+          tz = 16 - Math.floor(i / 2) * 5.2;
+        } else {
+          const j = i - (deadTreeCount - 12);
+          tx = (j - 5.5) * 8.4;
+          tz = -spec.lengthZ - 18 - (j % 4) * 7.5;
+        }
+        const sc = 0.8 + ((i * 13) % 8) * 0.11;
+        _targetPos.set(tx, -1.85 + 2.0 * sc, tz);
+        _euler.set(((i % 3) - 1) * 0.12, i * 1.1, ((i % 2 === 0 ? 1 : -1) * 0.14));
+        _quat.setFromEuler(_euler);
         _scale.set(sc, sc, sc);
         _mat4.compose(_targetPos, _quat, _scale);
-        bambooInst.setMatrixAt(i, _mat4);
-        const cHex =
-          spec.themeStyle === 'eclipse_abyss' || spec.themeStyle === 'crimson_citadel'
-            ? 0x4c1d95
-            : spec.themeStyle === 'final_sanctum'
-              ? 0x991b1b
+        deadTrunkInst.setMatrixAt(i, _mat4);
+
+        _targetPos.set(tx + (i % 2 === 0 ? 0.45 : -0.45) * sc, -1.85 + 3.8 * sc, tz);
+        _euler.set(0.35, i * 1.7, (i % 2 === 0 ? -0.75 : 0.75));
+        _quat.setFromEuler(_euler);
+        _scale.set(sc, sc, sc);
+        _mat4.compose(_targetPos, _quat, _scale);
+        deadBranchInst.setMatrixAt(i, _mat4);
+      }
+      deadTrunkInst.instanceMatrix.needsUpdate = true;
+      deadTrunkInst.computeBoundingSphere();
+      deadBranchInst.instanceMatrix.needsUpdate = true;
+      deadBranchInst.computeBoundingSphere();
+      this.levelGroup.add(deadTrunkInst, deadBranchInst);
+    } else {
+      const treeCount = this.isLowEndMode() ? 48 : 80;
+      const trunkGeo = new THREE.CylinderGeometry(0.24, 0.42, 4.4, 6);
+      const canopyGeo = new THREE.DodecahedronGeometry(2.35, 0);
+      const trunkInst = new THREE.InstancedMesh(trunkGeo, this.mats.treeBark, treeCount);
+      const canopyInst = new THREE.InstancedMesh(canopyGeo, this.mats.treeCanopy, treeCount);
+      for (let i = 0; i < treeCount; i++) {
+        let tx = 0;
+        let tz = 0;
+        if (i < treeCount - 14) {
+          const side = i % 2 === 0 ? -1 : 1;
+          const lane = (i % 6) * 7.8;
+          tx = side * (spec.widthX / 2 + 10.5 + lane + ((i * 13) % 5));
+          tz = 18 - Math.floor(i / 2) * 5.8;
+        } else {
+          // Grove behind the boss temple horizon
+          const j = i - (treeCount - 14);
+          tx = (j - 6.5) * 8.5;
+          tz = -spec.lengthZ - 22 - (j % 4) * 8.5;
+        }
+        const baseY =
+          spec.themeStyle === 'jade_bridge'
+            ? -3.8
+            : spec.themeStyle === 'astral_zenith'
+              ? -2.8
+              : -1.85;
+        const scale = 0.85 + ((i * 17) % 10) * 0.085;
+        const yaw = (i * 1.17) % (Math.PI * 2);
+
+        _targetPos.set(tx, baseY + 2.1 * scale, tz);
+        _quat.setFromAxisAngle(_upAxis, yaw);
+        _scale.set(scale, scale, scale);
+        _mat4.compose(_targetPos, _quat, _scale);
+        trunkInst.setMatrixAt(i, _mat4);
+
+        _targetPos.set(tx, baseY + 4.9 * scale, tz);
+        _scale.set(scale * 1.15, scale * 0.92, scale * 1.15);
+        _mat4.compose(_targetPos, _quat, _scale);
+        canopyInst.setMatrixAt(i, _mat4);
+
+        let canopyHex = 0x5d9b79;
+        if (spec.themeStyle === 'dawn_shrine') {
+          canopyHex = i % 3 === 0 ? 0xf9a8d4 : i % 2 === 0 ? 0x6ba683 : 0x4f8a69;
+        } else if (spec.themeStyle === 'jade_bridge') {
+          canopyHex = i % 2 === 0 ? 0x2dd4bf : 0x0f766e;
+        } else if (spec.themeStyle === 'white_citadel') {
+          canopyHex = i % 3 === 0 ? 0xfda4af : i % 2 === 0 ? 0xf43f5e : 0x64748b;
+        } else if (spec.themeStyle === 'obsidian_garden') {
+          canopyHex = i % 2 === 0 ? 0x6366f1 : 0x4338ca;
+        } else if (spec.themeStyle === 'astral_zenith') {
+          canopyHex = i % 2 === 0 ? 0xa78bfa : 0x7c3aed;
+        } else if (spec.themeStyle === 'crimson_citadel') {
+          canopyHex = i % 2 === 0 ? 0xbe123c : 0x4c1d95;
+        } else if (spec.themeStyle === 'ash_gorge') {
+          canopyHex = i % 2 === 0 ? 0xd97706 : 0x78716c;
+        } else if (spec.themeStyle === 'iron_bastion') {
+          canopyHex = i % 2 === 0 ? 0x64748b : 0x334155;
+        }
+        _color.setHex(canopyHex);
+        canopyInst.setColorAt(i, _color);
+      }
+      trunkInst.instanceMatrix.needsUpdate = true;
+      trunkInst.computeBoundingSphere();
+      canopyInst.instanceMatrix.needsUpdate = true;
+      canopyInst.computeBoundingSphere();
+      if (canopyInst.instanceColor) canopyInst.instanceColor.needsUpdate = true;
+      this.levelGroup.add(trunkInst, canopyInst);
+
+      // Instanced Bamboo / Blossom Groves near the flanking stream banks
+      if (spec.themeStyle !== 'jade_bridge' && spec.themeStyle !== 'astral_zenith') {
+        const bambooCount = 44;
+        const bambooGeo = new THREE.CylinderGeometry(0.11, 0.14, 7.5, 6);
+        const bambooInst = new THREE.InstancedMesh(bambooGeo, this.mats.bambooStalk, bambooCount);
+        for (let i = 0; i < bambooCount; i++) {
+          const side = i % 2 === 0 ? -1 : 1;
+          const x = side * (spec.widthX / 2 + 8.6 + (i % 4) * 1.9);
+          const z = 10 - Math.floor(i / 2) * 6.4;
+          _targetPos.set(x, 2.2, z);
+          _quat.setFromAxisAngle(_v1.set(0, 0, 1), side * 0.04 * ((i % 3) - 1));
+          const sc = 0.85 + (i % 4) * 0.12;
+          _scale.set(sc, sc, sc);
+          _mat4.compose(_targetPos, _quat, _scale);
+          bambooInst.setMatrixAt(i, _mat4);
+          const cHex =
+            spec.themeStyle === 'crimson_citadel'
+              ? 0x4c1d95
               : spec.themeStyle === 'ash_gorge'
                 ? 0x78716c
                 : spec.themeStyle === 'obsidian_garden' || spec.themeStyle === 'iron_bastion'
@@ -1307,41 +1521,44 @@ export class SamuraiGameEngine {
                   : i % 3 === 0
                     ? 0x76b093
                     : 0x629b7e;
-        _color.setHex(cHex);
-        bambooInst.setColorAt(i, _color);
+          _color.setHex(cHex);
+          bambooInst.setColorAt(i, _color);
+        }
+        bambooInst.instanceMatrix.needsUpdate = true;
+        bambooInst.computeBoundingSphere();
+        this.levelGroup.add(bambooInst);
       }
-      bambooInst.instanceMatrix.needsUpdate = true;
-      bambooInst.computeBoundingSphere();
-      this.levelGroup.add(bambooInst);
     }
 
-    // Floating Wind / Blossom Petals (InstancedMesh, lightweight ambient motion)
+    // Floating Wind / Blossom Petals OR Rising Volcanic Embers in Infernal Levels
     this.petalCount = this.isLowEndMode() ? 36 : 72;
-    const petalGeo = new THREE.PlaneGeometry(0.14, 0.09);
+    const petalGeo = new THREE.PlaneGeometry(isInfernal ? 0.13 : 0.14, isInfernal ? 0.13 : 0.09);
     const petalColor =
-      spec.themeStyle === 'white_citadel' ||
-      spec.themeStyle === 'eclipse_abyss' ||
-      spec.themeStyle === 'crimson_citadel'
-        ? 0xfda4af
-        : spec.themeStyle === 'ash_gorge' || spec.themeStyle === 'final_sanctum'
-          ? 0xfcd34d
-          : spec.themeStyle === 'obsidian_garden'
-            ? 0xc7d2fe
-            : spec.themeStyle === 'astral_zenith'
-              ? 0xddd6fe
-              : 0xffffff;
+      isInfernal
+        ? spec.themeStyle === 'final_sanctum'
+          ? 0xfb923c
+          : 0xf43f5e
+        : spec.themeStyle === 'white_citadel' || spec.themeStyle === 'crimson_citadel'
+          ? 0xfda4af
+          : spec.themeStyle === 'ash_gorge'
+            ? 0xfcd34d
+            : spec.themeStyle === 'obsidian_garden'
+              ? 0xc7d2fe
+              : spec.themeStyle === 'astral_zenith'
+                ? 0xddd6fe
+                : 0xffffff;
     const petalMat = new THREE.MeshBasicMaterial({
       color: petalColor,
       side: THREE.DoubleSide,
       transparent: true,
-      opacity: 0.75,
+      opacity: isInfernal ? 0.9 : 0.75,
     });
     this.petalInstanced = new THREE.InstancedMesh(petalGeo, petalMat, this.petalCount);
     this.petalInstanced.frustumCulled = false;
     this.petalData = new Float32Array(this.petalCount * 4);
     for (let i = 0; i < this.petalCount; i++) {
       this.petalData[i * 4 + 0] = (Math.random() - 0.5) * spec.widthX;
-      this.petalData[i * 4 + 1] = 0.8 + Math.random() * 6.5;
+      this.petalData[i * 4 + 1] = 0.4 + Math.random() * 6.8;
       this.petalData[i * 4 + 2] = 10 - Math.random() * spec.lengthZ;
       this.petalData[i * 4 + 3] = Math.random() * Math.PI * 2;
     }
@@ -1850,8 +2067,12 @@ export class SamuraiGameEngine {
 
   private update(dt: number): void {
     this.elapsed += dt;
-    // Animate flowing streams cleanly
+    // Animate flowing streams & molten lava cleanly
     this.mats.streamWaterTex.offset.y -= dt * 0.45;
+    this.mats.lavaStreamTex.offset.y -= dt * 0.28;
+    if (this.isInfernalLevel && this.infernoLight) {
+      this.infernoLight.intensity = 20 + Math.sin(this.elapsed * 5.2) * 3.5;
+    }
 
     const inp = this.input.poll(dt);
     this.lastInputSnap = inp;
@@ -1913,7 +2134,7 @@ export class SamuraiGameEngine {
       if (this.storyTimer <= 0) this.storySubtitle = null;
     }
 
-    // Time Slow ability (3s duration, 30s cooldown)
+    // Time Slow ability (4s duration, 30s cooldown)
     if (this.timeSlowTimer > 0) {
       this.timeSlowTimer = Math.max(0, this.timeSlowTimer - dt);
     }
@@ -1926,12 +2147,12 @@ export class SamuraiGameEngine {
       this.timeSlowTimer <= 0 &&
       this.timeSlowCooldown <= 0
     ) {
-      this.timeSlowTimer = 3.0;
+      this.timeSlowTimer = 4.0;
       this.timeSlowCooldown = 30.0;
       this.audio.playSpatial('time_slow', this.playerPos);
       this.spawnShockwave(this.playerPos, 0x38bdf8, 6.4, 0.42);
       this.camFov = 51.2;
-      this.pushFeedback('CRONOSTASI ATTIVA · TEMPO RALLENTATO (3s)', 'chrono');
+      this.pushFeedback('CRONOSTASI ATTIVA · TEMPO RALLENTATO (4s)', 'chrono');
     }
 
     const worldDt = this.timeSlowTimer > 0 ? dt * 0.25 : dt;
@@ -1982,6 +2203,7 @@ export class SamuraiGameEngine {
     if (this.parryWindowTimer > 0) this.parryWindowTimer -= dt;
     if (this.postParryTimer > 0) this.postParryTimer -= dt;
     if (this.postDodgeTimer > 0) this.postDodgeTimer -= dt;
+    if (this.bowCooldown > 0) this.bowCooldown = Math.max(0, this.bowCooldown - dt);
     if (this.comboResetTimer > 0) {
       this.comboResetTimer -= dt;
       if (this.comboResetTimer <= 0) {
@@ -2021,14 +2243,18 @@ export class SamuraiGameEngine {
         this.playerPos.addScaledVector(_v1, this.attackLungeSpeed * dt);
       }
 
-      // Active hit window
+      // Active hit window (or straight arrow release if bow_shot)
       if (!this.hasHitThisAttack && tNorm >= 0.24 && tNorm <= 0.65) {
         this.hasHitThisAttack = true;
-        this.performPlayerStrikeHitbox();
+        if (this.attackVariant === 'bow_shot') {
+          this.spawnHeroArrow();
+        } else {
+          this.performPlayerStrikeHitbox();
+        }
       }
 
       // Buffer next combo / dodge input during active/recovery phase
-      if (tNorm >= 0.3) {
+      if (tNorm >= 0.3 && this.attackVariant !== 'bow_shot') {
         if (inp.dodgePressed) this.bufferedAction = 'dodge';
         else if (inp.heavyAttackPressed) this.bufferedAction = 'heavy';
         else if (inp.lightAttackPressed) this.bufferedAction = 'light';
@@ -2084,7 +2310,9 @@ export class SamuraiGameEngine {
     }
 
     if (canAct) {
-      if (inp.dodgePressed && this.playerStamina >= 18) {
+      if (inp.bowPressed && this.bowUnlocked && this.bowCooldown <= 0) {
+        this.startHeroBowShot(inp);
+      } else if (inp.dodgePressed && this.playerStamina >= 18) {
         this.startPlayerDodge(inp);
       } else if (inp.heavyAttackPressed && this.playerStamina >= 22) {
         this.startPlayerAttack('heavy', inp);
@@ -2507,6 +2735,71 @@ export class SamuraiGameEngine {
     this.audio.playSpatial('dash', this.playerPos);
     _v2.set(this.playerPos.x, 0.12, this.playerPos.z);
     this.spawnShockwave(_v2, 0x94a3b8, 2.2, 0.22);
+  }
+
+  private startHeroBowShot(inp: UnifiedInput): void {
+    this.playerState = 'attack';
+    this.attackKind = 'light';
+    this.attackVariant = 'bow_shot';
+    this.actionTimer = 0;
+    this.actionDuration = 0.34;
+    this.attackLungeSpeed = 0;
+    this.hasHitThisAttack = false;
+    this.bufferedAction = null;
+    this.bowCooldown = 10.0;
+
+    // Face locked enemy if locked, else movement direction or straight forward along camera yaw
+    const locked = this.getLockedEnemy();
+    const moveMag = Math.hypot(inp.moveX, inp.moveY);
+    if (locked) {
+      _v1.subVectors(locked.pos, this.playerPos);
+      _v1.y = 0;
+      if (_v1.lengthSq() > 0.001) {
+        this.playerYaw = Math.atan2(-_v1.x, -_v1.z);
+      }
+    } else if (moveMag > 0.12) {
+      this.computeMoveWorldDir(inp, _v1);
+      this.playerYaw = Math.atan2(-_v1.x, -_v1.z);
+    } else {
+      this.playerYaw = this.camYaw;
+    }
+
+    this.camFov = 52.5;
+  }
+
+  private spawnHeroArrow(): void {
+    const dir = new THREE.Vector3(-Math.sin(this.playerYaw), 0, -Math.cos(this.playerYaw)).normalize();
+    const pos = new THREE.Vector3(
+      this.playerPos.x + dir.x * 0.95,
+      this.playerPos.y + 1.24,
+      this.playerPos.z + dir.z * 0.95,
+    );
+
+    const coreMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+    const group = new THREE.Group();
+    const shaft = new THREE.Mesh(this.arrowShaftGeo, coreMat);
+    const head = new THREE.Mesh(this.arrowHeadGeo, coreMat);
+    head.position.z = 0.65;
+    group.add(shaft, head);
+    group.position.copy(pos);
+    group.rotation.y = Math.atan2(dir.x, dir.z);
+    this.vfxGroup.add(group);
+
+    this.heroArrows.push({
+      group,
+      coreMat,
+      pos,
+      dir,
+      speed: 34.0,
+      damage: 64,
+      postureDmg: 48,
+      life: 1.45,
+    });
+
+    this.spawnSparks(pos, 12, 0x38bdf8);
+    this.spawnShockwave(this.playerPos, 0x38bdf8, 2.2, 0.22);
+    this.audio.playSpatial('bow_shot', this.playerPos, 1.2);
+    this.pushFeedback('FRECCIA DI SAKIRO!', 'parry');
   }
 
   private performPlayerStrikeHitbox(): void {
@@ -3510,6 +3803,20 @@ export class SamuraiGameEngine {
         lForearmX = 0.85;
         weaponRotZ = 0.35;
         legSwing = 0.35;
+      } else if (this.attackVariant === 'bow_shot') {
+        // Archer draw pose: left arm extended straight ahead with bow, right hand pulling bowstring
+        hipY = 0.87;
+        torsoPitch = -0.06;
+        torsoYaw = -0.58;
+        headYaw = 0.52;
+        rShoulderX = 1.15;
+        rShoulderZ = 0.35;
+        rForearmX = 1.25;
+        lShoulderX = 1.52;
+        lShoulderZ = -0.08;
+        lForearmX = 0.12;
+        weaponRotX = -Math.PI / 2 - 0.8;
+        legSwing = 0.22;
       } else {
         // light4 full horizontal spin cleave
         hipY = 0.82;
@@ -3584,8 +3891,12 @@ export class SamuraiGameEngine {
     r.weaponPivot.rotation.y = THREE.MathUtils.damp(r.weaponPivot.rotation.y, weaponRotY, 20, dt);
     r.weaponPivot.rotation.z = THREE.MathUtils.damp(r.weaponPivot.rotation.z, weaponRotZ, 20, dt);
 
-    // Hero Katana active blade glow for crystal-clear strike & guard visibility
-    if (this.playerState === 'attack') {
+    // Hero Katana active blade glow & Bow equip visibility
+    const isBowPose = this.playerState === 'attack' && this.attackVariant === 'bow_shot';
+    if (r.backBow) r.backBow.visible = this.bowUnlocked && !isBowPose;
+    if (r.drawnBow) r.drawnBow.visible = this.bowUnlocked && isBowPose;
+
+    if (this.playerState === 'attack' && !isBowPose) {
       r.bladeGlowMesh.visible = true;
       const gMat = r.bladeGlowMesh.material as THREE.MeshBasicMaterial;
       if (this.attackVariant === 'crimson_cross' || this.attackVariant === 'eclipse_judgment') {
@@ -3602,6 +3913,8 @@ export class SamuraiGameEngine {
 
   private animateSamuraiIdle(rig: ArticulatedSamuraiRig, t: number): void {
     const breath = Math.sin(t * 2.0);
+    if (rig.backBow) rig.backBow.visible = this.bowUnlocked;
+    if (rig.drawnBow) rig.drawnBow.visible = false;
     rig.root.rotation.x = 0;
     rig.hips.position.y = 0.88 + breath * 0.014;
     rig.torso.rotation.x = -0.08 + breath * 0.015;
@@ -4072,6 +4385,53 @@ export class SamuraiGameEngine {
       }
     }
 
+    // Sakiro Straight Hero Arrows (run at full heroDt even during Cronostasi!)
+    for (let i = this.heroArrows.length - 1; i >= 0; i--) {
+      const arr = this.heroArrows[i];
+      arr.life -= heroDt;
+      arr.pos.addScaledVector(arr.dir, arr.speed * heroDt);
+      arr.group.position.copy(arr.pos);
+
+      if (Math.random() < 0.65) {
+        this.spawnSparks(arr.pos, 1, 0x38bdf8);
+      }
+
+      let consumed = arr.life <= 0;
+      if (!consumed) {
+        for (const enemy of this.enemies) {
+          if (enemy.state === 'dead') continue;
+          const dx = enemy.pos.x - arr.pos.x;
+          const dz = enemy.pos.z - arr.pos.z;
+          const dy = Math.abs(enemy.pos.y + 1.15 - arr.pos.y);
+          if (dx * dx + dz * dz < 1.28 * 1.28 && dy < 1.45) {
+            enemy.isGuarding = false;
+            enemy.guardTimer = 0;
+            const isCritical = enemy.state === 'stagger';
+            _v2.copy(arr.dir);
+            this.applyHitToEnemy(
+              enemy,
+              isCritical ? Math.round(arr.damage * 1.45) : arr.damage,
+              arr.postureDmg,
+              _v2,
+              11.5,
+              isCritical,
+              true,
+            );
+            this.spawnSparks(arr.pos, 18, 0x38bdf8);
+            this.spawnShockwave(enemy.pos, 0x38bdf8, 2.8, 0.26);
+            consumed = true;
+            break;
+          }
+        }
+      }
+
+      if (consumed) {
+        this.vfxGroup.remove(arr.group);
+        arr.coreMat.dispose();
+        this.heroArrows.splice(i, 1);
+      }
+    }
+
     // Boss Parabolic Explosive Bombs (visible landing zone + countdown fill before blast!)
     for (let i = this.bossBombs.length - 1; i >= 0; i--) {
       const b = this.bossBombs[i];
@@ -4189,12 +4549,16 @@ export class SamuraiGameEngine {
       let z = this.petalData[idx + 2];
       let phase = this.petalData[idx + 3];
 
-      phase += dt * 1.4;
-      x += Math.sin(phase) * 0.65 * dt;
-      y -= 0.45 * dt;
-      z += 0.35 * dt;
+      phase += dt * (this.isInfernalLevel ? 2.2 : 1.4);
+      x += Math.sin(phase) * (this.isInfernalLevel ? 0.95 : 0.65) * dt;
+      y += (this.isInfernalLevel ? 1.15 : -0.45) * dt;
+      z += (this.isInfernalLevel ? 0.15 : 0.35) * dt;
 
-      if (y < 0.1) {
+      if (this.isInfernalLevel && y > 8.5) {
+        y = 0.25 + Math.random() * 0.8;
+        x = (Math.random() - 0.5) * (spec.widthX + 6);
+        z = this.playerPos.z - 28 + Math.random() * 40;
+      } else if (!this.isInfernalLevel && y < 0.1) {
         y = 5.5 + Math.random() * 2;
         x = (Math.random() - 0.5) * spec.widthX;
         z = this.playerPos.z - 22 + Math.random() * 34;
@@ -4358,6 +4722,8 @@ export class SamuraiGameEngine {
       timeSlowActive: this.timeSlowTimer > 0,
       timeSlowRemaining: Number(this.timeSlowTimer.toFixed(1)),
       timeSlowCooldown: Math.ceil(this.timeSlowCooldown),
+      bowUnlocked: this.bowUnlocked,
+      bowCooldown: Math.ceil(this.bowCooldown),
       levelIndex: this.currentLevelIndex,
       levelTitle: spec.title,
       checkpointIndex: this.currentCheckpointIndex,

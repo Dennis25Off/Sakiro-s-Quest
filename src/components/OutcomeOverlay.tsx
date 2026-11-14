@@ -104,14 +104,14 @@ export const OutcomeOverlay: React.FC<OutcomeOverlayProps> = ({
                 {isFinalAct
                   ? 'Vendetta Compiuta'
                   : isFifthAct
-                    ? 'Cronostasi Sbloccata'
+                    ? 'Cronostasi e Arco Sbloccati'
                     : `${spec.title} Liberato`}
               </h2>
               <p className="text-sm text-[#4A5568] mt-3 leading-relaxed">
                 {isFinalAct
                   ? 'Sakiro ha abbattuto Shogun Kurogane e tutti i responsabili. La sua famiglia è finalmente vendicata.'
                   : isFifthAct
-                    ? 'Lord Tenmei è caduto! Hai sbloccato la Cronostasi ([T] / [↑ D-Pad]: rallenta il tempo per 3s, ricarica 30s). La marcia verso i carnefici continua nell\'Atto 06.'
+                    ? 'Lord Tenmei è caduto! Hai sbloccato la Cronostasi ([T] / [↑ D-Pad]: rallenta il tempo per 4s, ricarica 30s) e l\'Arco di Sakiro ([G] / [→ D-Pad]: freccia dritta ad alto impatto, ricarica 10s). La marcia continua nell\'Atto 06.'
                     : 'Il comandante nemico è caduto. Il progresso è stato salvato automaticamente per il prossimo atto.'}
               </p>
               <div className="flex flex-col gap-2.5 mt-7">

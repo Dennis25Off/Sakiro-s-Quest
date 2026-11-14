@@ -17,6 +17,8 @@ export interface ArticulatedSamuraiRig {
   weaponPivot: THREE.Group;
   bladeGlowMesh: THREE.Mesh;
   offhandWeapon?: THREE.Group;
+  backBow?: THREE.Group;
+  drawnBow?: THREE.Group;
   shadowDisc: THREE.Mesh;
 }
 
@@ -78,7 +80,67 @@ const sharedGeos = {
   kanaboGeo: new THREE.CylinderGeometry(0.065, 0.032, 1.35, 8),
   haoriGeo: new THREE.BoxGeometry(0.42, 0.58, 0.04),
   shadowDiscGeo: new THREE.PlaneGeometry(1.35, 1.35),
+  bowCurveGeo: (() => {
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(0, -0.72, 0.14),
+      new THREE.Vector3(0, -0.36, -0.08),
+      new THREE.Vector3(0, 0.04, -0.14),
+      new THREE.Vector3(0, 0.45, -0.05),
+      new THREE.Vector3(0, 0.82, 0.18),
+    ]);
+    return new THREE.TubeGeometry(curve, 18, 0.024, 6, false);
+  })(),
+  bowGripGeo: new THREE.CylinderGeometry(0.034, 0.034, 0.2, 8),
+  bowTipGeo: new THREE.ConeGeometry(0.032, 0.1, 6),
+  bowStringGeo: new THREE.CylinderGeometry(0.005, 0.005, 1.54, 4),
+  bowArrowShaftGeo: new THREE.CylinderGeometry(0.011, 0.011, 0.92, 6),
+  bowArrowTipGeo: new THREE.ConeGeometry(0.034, 0.12, 6),
 };
+
+function createYumiBowGroup(
+  limbMat: THREE.Material,
+  gripMat: THREE.Material,
+  trimMat: THREE.Material,
+  stringMat: THREE.Material,
+  withNockedArrow: boolean,
+): THREE.Group {
+  const bow = new THREE.Group();
+  const limbs = new THREE.Mesh(sharedGeos.bowCurveGeo, limbMat);
+  limbs.castShadow = true;
+  bow.add(limbs);
+
+  const grip = new THREE.Mesh(sharedGeos.bowGripGeo, gripMat);
+  grip.position.set(0, 0.02, -0.13);
+  bow.add(grip);
+
+  const upperTip = new THREE.Mesh(sharedGeos.bowTipGeo, trimMat);
+  upperTip.position.set(0, 0.84, 0.19);
+  upperTip.rotation.x = 0.55;
+  bow.add(upperTip);
+
+  const lowerTip = new THREE.Mesh(sharedGeos.bowTipGeo, trimMat);
+  lowerTip.position.set(0, -0.74, 0.15);
+  lowerTip.rotation.x = Math.PI - 0.55;
+  bow.add(lowerTip);
+
+  const stringMesh = new THREE.Mesh(sharedGeos.bowStringGeo, stringMat);
+  stringMesh.position.set(0, 0.05, 0.16);
+  bow.add(stringMesh);
+
+  if (withNockedArrow) {
+    const shaft = new THREE.Mesh(sharedGeos.bowArrowShaftGeo, trimMat);
+    shaft.rotation.x = Math.PI / 2;
+    shaft.position.set(0, 0.05, -0.22);
+    bow.add(shaft);
+
+    const tip = new THREE.Mesh(sharedGeos.bowArrowTipGeo, stringMat);
+    tip.rotation.x = -Math.PI / 2;
+    tip.position.set(0, 0.05, -0.72);
+    bow.add(tip);
+  }
+
+  return bow;
+}
 
 export function createHeroSamuraiRig(mats: GameMaterialLibrary): ArticulatedSamuraiRig {
   return buildSamuraiRig({
@@ -339,6 +401,25 @@ function buildSamuraiRig(opts: {
     leftForearm.add(offhandWeapon);
   }
 
+  let backBow: THREE.Group | undefined;
+  let drawnBow: THREE.Group | undefined;
+  if (opts.style === 'hero') {
+    const stringGlowMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+    backBow = createYumiBowGroup(opts.clothMat, opts.accentMat, opts.trimMat, stringGlowMat, false);
+    backBow.position.set(-0.04, 0.28, 0.22);
+    backBow.rotation.set(0.1, 0.08, -0.52);
+    backBow.scale.setScalar(0.86);
+    backBow.visible = false;
+    torso.add(backBow);
+
+    drawnBow = createYumiBowGroup(opts.clothMat, opts.accentMat, opts.trimMat, stringGlowMat, true);
+    drawnBow.position.set(0.02, -0.24, -0.06);
+    drawnBow.rotation.set(-Math.PI / 2 + 0.1, 0, 0);
+    drawnBow.scale.setScalar(0.95);
+    drawnBow.visible = false;
+    leftForearm.add(drawnBow);
+  }
+
   return {
     root,
     hips,
@@ -354,6 +435,8 @@ function buildSamuraiRig(opts: {
     weaponPivot,
     bladeGlowMesh,
     offhandWeapon,
+    backBow,
+    drawnBow,
     shadowDisc,
   };
 }
@@ -400,6 +483,94 @@ export function createNeoToriiGate(
   const plaque = new THREE.Mesh(new THREE.BoxGeometry(0.65, 0.85, 0.45), topMat);
   plaque.position.y = 4.9;
   group.add(plaque);
+
+  return group;
+}
+
+export function createRuinedToriiGate(
+  mats: GameMaterialLibrary,
+  scale = 1,
+  variant = 0,
+): THREE.Group {
+  const group = new THREE.Group();
+  group.scale.setScalar(scale);
+
+  const flip = variant % 2 === 0 ? 1 : -1;
+  const baseGeo = new THREE.CylinderGeometry(0.48, 0.56, 0.46, 8);
+
+  // Intact-but-scorched tilted main pillar
+  const intactX = 2.6 * flip;
+  const baseA = new THREE.Mesh(baseGeo, mats.charredStone);
+  baseA.position.set(intactX, 0.23, 0);
+  baseA.castShadow = true;
+  baseA.receiveShadow = true;
+  group.add(baseA);
+
+  const pillarA = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.27, 0.34, 4.9, 8),
+    mats.charredStone,
+  );
+  pillarA.position.set(intactX, 2.45, 0);
+  pillarA.rotation.z = flip * 0.07;
+  pillarA.castShadow = true;
+  pillarA.receiveShadow = true;
+  group.add(pillarA);
+
+  // Shattered stump pillar on the opposite side
+  const brokenX = -2.6 * flip;
+  const baseB = new THREE.Mesh(baseGeo, mats.charredStone);
+  baseB.position.set(brokenX, 0.23, 0);
+  baseB.castShadow = true;
+  baseB.receiveShadow = true;
+  group.add(baseB);
+
+  const stumpB = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.3, 0.35, 2.15, 7),
+    mats.charredStone,
+  );
+  stumpB.position.set(brokenX, 1.1, 0.08);
+  stumpB.rotation.z = -flip * 0.1;
+  stumpB.rotation.x = 0.06;
+  stumpB.castShadow = true;
+  group.add(stumpB);
+
+  // Glowing ember fracture core atop the snapped pillar stump
+  const stumpGlow = new THREE.Mesh(
+    new THREE.DodecahedronGeometry(0.24, 0),
+    mats.emberCrack,
+  );
+  stumpGlow.position.set(brokenX + flip * 0.1, 2.15, 0.14);
+  group.add(stumpGlow);
+
+  // Half-collapsed broken upper lintel resting skewed on remaining pillar
+  const brokenBeam = new THREE.Mesh(
+    new THREE.BoxGeometry(5.1, 0.42, 0.56),
+    mats.charredStone,
+  );
+  brokenBeam.position.set(flip * 1.15, 4.05, 0.05);
+  brokenBeam.rotation.z = flip * 0.34;
+  brokenBeam.rotation.y = flip * 0.08;
+  brokenBeam.castShadow = true;
+  group.add(brokenBeam);
+
+  // Glowing ember crack strip along the ruined beam
+  const beamCrack = new THREE.Mesh(
+    new THREE.BoxGeometry(1.4, 0.14, 0.6),
+    mats.emberCrack,
+  );
+  beamCrack.position.set(flip * 0.1, 3.68, 0.05);
+  beamCrack.rotation.z = flip * 0.34;
+  group.add(beamCrack);
+
+  // Fallen shattered lintel chunk lying on the ground near the broken pillar (kept outside center walkway)
+  const fallenBeam = new THREE.Mesh(
+    new THREE.BoxGeometry(2.8, 0.38, 0.54),
+    mats.charredStone,
+  );
+  fallenBeam.position.set(brokenX - flip * 0.9, 0.22, 0.85);
+  fallenBeam.rotation.set(0.18, flip * 0.45, -flip * 0.12);
+  fallenBeam.castShadow = true;
+  group.add(fallenBeam);
 
   return group;
 }
