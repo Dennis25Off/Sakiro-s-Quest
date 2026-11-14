@@ -1,0 +1,6 @@
+{
+  "name": "Sakiro's Quest",
+  "description": "Gioco d'azione 3D in terza persona attraverso 10 atti: Sakiro deve vendicare la sua famiglia uccidendo tutti i suoi nemici.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
