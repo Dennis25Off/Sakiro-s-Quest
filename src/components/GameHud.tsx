@@ -37,9 +37,11 @@ export const GameHud: React.FC<GameHudProps> = ({ hud, onPause }) => {
       ? ((30 - hud.timeSlowCooldown) / 30) * 100
       : 100;
 
-  const bowReady = hud.bowUnlocked && hud.bowCooldown <= 0;
-  const bowBarPct =
-    hud.bowCooldown > 0 ? ((10 - hud.bowCooldown) / 10) * 100 : 100;
+  const bowHasCharge = hud.bowUnlocked && hud.bowCharges > 0;
+  const bowFull = hud.bowUnlocked && hud.bowCharges >= hud.bowMaxCharges;
+  const bowSegmentPct = bowFull
+    ? 100
+    : ((5 - Math.min(5, hud.bowCooldown)) / 5) * 100;
 
   return (
     <div className="fixed inset-0 z-10 pointer-events-none flex flex-col justify-between p-5 lg:p-7">
@@ -54,16 +56,75 @@ export const GameHud: React.FC<GameHudProps> = ({ hud, onPause }) => {
         />
       )}
 
+      {/* Floating 3D-projected Combat Pop-Ups (transparent, non-blocking damage & hit indicators) */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-20">
+        {hud.popups.map((p) => {
+          const opacity =
+            p.progress < 0.58 ? 1 : Math.max(0, 1 - (p.progress - 0.58) / 0.42);
+          const scale = p.progress < 0.14 ? 1.18 - p.progress * 1.2 : 1;
+          const driftY = p.progress * 28;
+          const colorClass =
+            p.kind === 'damage'
+              ? 'text-[#FF4757] text-sm sm:text-base'
+              : p.kind === 'crit'
+                ? 'text-[#FB923C] text-base sm:text-lg'
+                : p.kind === 'parry'
+                  ? 'text-[#38BDF8] text-xs sm:text-sm'
+                  : p.kind === 'break'
+                    ? 'text-[#FBBF24] text-sm sm:text-base'
+                    : p.kind === 'guard'
+                      ? 'text-[#CBD5E1] text-xs'
+                      : 'text-[#FEF08A] text-sm sm:text-base';
+          return (
+            <div
+              key={p.id}
+              className={`absolute font-display font-extrabold tracking-wider whitespace-nowrap select-none transition-[left,top,opacity] duration-75 ease-linear ${colorClass}`}
+              style={{
+                left: `${p.xPct}%`,
+                top: `${p.yPct}%`,
+                opacity,
+                transform: `translate(-50%, calc(-50% - ${driftY}px)) scale(${scale})`,
+                textShadow:
+                  '0 2px 6px rgba(0, 0, 0, 0.92), 0 0 2px rgba(0, 0, 0, 0.95)',
+              }}
+            >
+              {p.text}
+            </div>
+          );
+        })}
+      </div>
+
       {/* TOP BAR: Minimal level context left, Engaged Enemy / Boss bar center, Pause button right */}
       <div className="relative flex items-start justify-between gap-4">
-        <div className="text-xs text-[#1E293B]">
-          <p className="font-display font-semibold tracking-wider text-[#12161F]">
-            {hud.levelTitle}
-          </p>
-          <p className="text-[#475569] mt-0.5">
-            {hud.checkpointName}
-            {hud.enemiesRemaining > 0 ? ` · ${hud.enemiesRemaining} avversari` : ''}
-          </p>
+        <div className="flex flex-col items-start gap-2">
+          <div className="text-xs text-[#1E293B]">
+            <p className="font-display font-semibold tracking-wider text-[#12161F]">
+              {hud.levelTitle}
+            </p>
+            <p className="text-[#475569] mt-0.5">
+              {hud.checkpointName}
+              {hud.enemiesRemaining > 0 ? ` · ${hud.enemiesRemaining} avversari` : ''}
+            </p>
+          </div>
+
+          {hud.feedback && (
+            <div
+              key={hud.feedback.id}
+              className={`px-3 py-1 text-[11px] font-display font-bold tracking-[0.14em] border ${
+                hud.feedback.kind === 'chrono'
+                  ? 'bg-[#0F172A]/90 text-[#38BDF8] border-[#38BDF8]'
+                  : hud.feedback.kind === 'parry'
+                    ? 'bg-[#F8FAFC]/88 text-[#0284C7] border-[#0284C7]'
+                    : hud.feedback.kind === 'break'
+                      ? 'bg-[#F8FAFC]/88 text-[#D97706] border-[#D97706]'
+                      : hud.feedback.kind === 'checkpoint'
+                        ? 'bg-[#F8FAFC]/88 text-[#059669] border-[#059669]'
+                        : 'bg-[#F8FAFC]/88 text-[#E12D39] border-[#E12D39]'
+              }`}
+            >
+              {hud.feedback.label}
+            </div>
+          )}
         </div>
 
         {/* Enemy / Boss Minimal Tension Bar */}
@@ -185,28 +246,6 @@ export const GameHud: React.FC<GameHudProps> = ({ hud, onPause }) => {
         </div>
       </div>
 
-      {/* CENTER-TOP FEEDBACK (Never covers center duel) */}
-      <div className="relative flex flex-col items-center justify-start gap-2 -mt-6">
-        {hud.feedback && (
-          <div
-            key={hud.feedback.id}
-            className={`px-4 py-1.5 text-xs font-display font-bold tracking-[0.16em] border ${
-              hud.feedback.kind === 'chrono'
-                ? 'bg-[#0F172A]/95 text-[#38BDF8] border-[#38BDF8]'
-                : hud.feedback.kind === 'parry'
-                  ? 'bg-[#F8FAFC]/94 text-[#0284C7] border-[#0284C7]'
-                  : hud.feedback.kind === 'break'
-                    ? 'bg-[#F8FAFC]/94 text-[#D97706] border-[#D97706]'
-                    : hud.feedback.kind === 'checkpoint'
-                      ? 'bg-[#F8FAFC]/94 text-[#059669] border-[#059669]'
-                      : 'bg-[#F8FAFC]/94 text-[#E12D39] border-[#E12D39]'
-            }`}
-          >
-            {hud.feedback.label}
-          </div>
-        )}
-      </div>
-
       {/* BOTTOM ROW: Player Vitals Left, Story Subtitles Bottom-Center, Controls Right */}
       <div className="relative flex items-end justify-between gap-4 lg:gap-6">
         {/* Player Vital Bars, Arco, Cronostasi & Minimal Combo Tracker (Bottom-Left) */}
@@ -214,28 +253,41 @@ export const GameHud: React.FC<GameHudProps> = ({ hud, onPause }) => {
           {hud.bowUnlocked && (
             <div
               className={`px-3.5 py-2 border ${
-                bowReady
+                bowHasCharge
                   ? 'bg-[#F8FAFC]/92 border-[#D97706] text-[#12161F]'
                   : 'bg-[#F8FAFC]/88 border-[#D4DCE6] text-[#475569]'
               }`}
             >
               <div className="flex items-center justify-between gap-3 text-[11px]">
-                <span className="font-display font-bold tracking-wider">ARCO</span>
+                <span className="font-display font-bold tracking-wider">
+                  ARCO · {hud.bowCharges}/{hud.bowMaxCharges}
+                </span>
                 <span className="font-mono-nums font-semibold">
-                  {bowReady
+                  {bowFull
                     ? hud.gamepadConnected
                       ? 'PRONTO · → D-Pad'
                       : 'PRONTO · G'
-                    : `RICARICA ${hud.bowCooldown}s`}
+                    : bowHasCharge
+                      ? `${hud.gamepadConnected ? '→ D-Pad' : 'G'} (+1 in ${hud.bowCooldown}s)`
+                      : `RICARICA ${hud.bowCooldown}s`}
                 </span>
               </div>
-              <div className="h-1 w-full bg-[#CBD5E1]/50 mt-1 overflow-hidden">
-                <div
-                  className={`h-full transition-all duration-100 ${
-                    bowReady ? 'bg-[#D97706]' : 'bg-[#94A3B8]'
-                  }`}
-                  style={{ width: `${Math.max(0, Math.min(100, bowBarPct))}%` }}
-                />
+              <div className="grid grid-cols-2 gap-1 mt-1">
+                {Array.from({ length: hud.bowMaxCharges }).map((_, idx) => {
+                  const filled = idx < hud.bowCharges;
+                  const recharging = idx === hud.bowCharges;
+                  const widthPct = filled ? 100 : recharging ? bowSegmentPct : 0;
+                  return (
+                    <div key={idx} className="h-1 bg-[#CBD5E1]/50 overflow-hidden">
+                      <div
+                        className={`h-full transition-all duration-100 ${
+                          filled ? 'bg-[#D97706]' : 'bg-[#94A3B8]'
+                        }`}
+                        style={{ width: `${Math.max(0, Math.min(100, widthPct))}%` }}
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

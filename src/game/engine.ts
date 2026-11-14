@@ -16,6 +16,7 @@ import {
 import { createMaterialLibrary, GameMaterialLibrary } from './textures';
 import {
   CombatFeedback,
+  CombatPopup,
   EnemyArchetype,
   EnemyHudInfo,
   EnemySpawnSpec,
@@ -205,6 +206,16 @@ interface ActiveCheckpoint {
   activated: boolean;
 }
 
+interface RuntimeCombatPopup {
+  id: number;
+  text: string;
+  kind: CombatPopup['kind'];
+  worldPos: THREE.Vector3;
+  screenOffsetX: number;
+  age: number;
+  duration: number;
+}
+
 export interface EngineCallbacks {
   onHudUpdate: (hud: HudSnapshot) => void;
   onCheckpointReached: (levelIndex: number, checkpointIndex: number, hp: number) => void;
@@ -264,7 +275,9 @@ export class SamuraiGameEngine {
   private timeSlowTimer = 0;
   private timeSlowCooldown = 0;
   private bowUnlocked = false;
-  private bowCooldown = 0;
+  private readonly bowMaxCharges = 2;
+  private bowCharges = 2;
+  private bowRechargeTimer = 0;
   private playerVelY = 0;
   private isGrounded = true;
   private lastSafePos = new THREE.Vector3(0, 0, 6);
@@ -351,6 +364,8 @@ export class SamuraiGameEngine {
   private feedback: CombatFeedback | null = null;
   private feedbackCounter = 0;
   private feedbackTimer = 0;
+  private popups: RuntimeCombatPopup[] = [];
+  private popupCounter = 0;
   private hitStopTimer = 0;
 
   // Loop & performance tracking
@@ -805,7 +820,9 @@ export class SamuraiGameEngine {
     this.postDodgeTimer = 0;
     this.timeSlowTimer = 0;
     this.timeSlowCooldown = 0;
-    this.bowCooldown = 0;
+    this.bowCharges = this.bowMaxCharges;
+    this.bowRechargeTimer = 0;
+    this.popups = [];
     this.lockedEnemyId = null;
     this.camYaw = 0;
     this.camPitch = 0.27;
@@ -1634,6 +1651,29 @@ export class SamuraiGameEngine {
     this.feedbackTimer = 1.65;
   }
 
+  private spawnPopup(
+    text: string,
+    kind: CombatPopup['kind'],
+    worldPos: THREE.Vector3,
+    yOffset = 1.95,
+    duration = 0.95,
+  ): void {
+    this.popupCounter += 1;
+    const jitterX = (Math.random() - 0.5) * 0.72;
+    this.popups.push({
+      id: this.popupCounter,
+      text,
+      kind,
+      worldPos: new THREE.Vector3(worldPos.x + jitterX, worldPos.y + yOffset, worldPos.z),
+      screenOffsetX: (Math.random() - 0.5) * 3.2,
+      age: 0,
+      duration,
+    });
+    if (this.popups.length > 10) {
+      this.popups.shift();
+    }
+  }
+
   private spawnSparks(origin: THREE.Vector3, count: number, colorHex: number): void {
     let spawned = 0;
     for (let i = 0; i < this.sparkPool.length && spawned < count; i++) {
@@ -2129,6 +2169,12 @@ export class SamuraiGameEngine {
       this.feedbackTimer -= dt;
       if (this.feedbackTimer <= 0) this.feedback = null;
     }
+    for (let i = this.popups.length - 1; i >= 0; i--) {
+      this.popups[i].age += dt;
+      if (this.popups[i].age >= this.popups[i].duration) {
+        this.popups.splice(i, 1);
+      }
+    }
     if (this.storyTimer > 0) {
       this.storyTimer -= dt;
       if (this.storyTimer <= 0) this.storySubtitle = null;
@@ -2203,7 +2249,14 @@ export class SamuraiGameEngine {
     if (this.parryWindowTimer > 0) this.parryWindowTimer -= dt;
     if (this.postParryTimer > 0) this.postParryTimer -= dt;
     if (this.postDodgeTimer > 0) this.postDodgeTimer -= dt;
-    if (this.bowCooldown > 0) this.bowCooldown = Math.max(0, this.bowCooldown - dt);
+    if (this.bowUnlocked && this.bowCharges < this.bowMaxCharges) {
+      this.bowRechargeTimer -= dt;
+      if (this.bowRechargeTimer <= 0) {
+        this.bowCharges += 1;
+        this.bowRechargeTimer =
+          this.bowCharges < this.bowMaxCharges ? 5.0 + this.bowRechargeTimer : 0;
+      }
+    }
     if (this.comboResetTimer > 0) {
       this.comboResetTimer -= dt;
       if (this.comboResetTimer <= 0) {
@@ -2310,7 +2363,7 @@ export class SamuraiGameEngine {
     }
 
     if (canAct) {
-      if (inp.bowPressed && this.bowUnlocked && this.bowCooldown <= 0) {
+      if (inp.bowPressed && this.bowUnlocked && this.bowCharges > 0) {
         this.startHeroBowShot(inp);
       } else if (inp.dodgePressed && this.playerStamina >= 18) {
         this.startPlayerDodge(inp);
@@ -2418,7 +2471,7 @@ export class SamuraiGameEngine {
       this.playerKnockbackVel.set(0, 0, 0);
       this.playerHp = Math.max(0, this.playerHp - 10);
       this.audio.playSpatial('hit_flesh', this.playerPos, 0.8);
-      this.pushFeedback('CADUTA NEL TORRENTE · -10 HP', 'damage');
+      this.spawnPopup('-10 HP · CADUTA', 'damage', this.playerPos, 2.05, 1.05);
       if (this.playerHp <= 0) {
         this.handlePlayerDeath();
       }
@@ -2531,7 +2584,7 @@ export class SamuraiGameEngine {
         this.actionDuration = 0.34;
         this.attackLungeSpeed = 9.2;
         this.audio.playSpatial('iai_counter', this.playerPos, 1.15);
-        this.pushFeedback('CONTRATTACCO LAMPO', 'parry');
+        this.spawnPopup('CONTRATTACCO!', 'parry', this.playerPos, 2.15, 0.85);
         this.camFov = 57.0;
       } else if (this.combosUnlocked && this.heavyOpenerStep === 2) {
         // H -> L -> L = Turbine d'Acciaio (360° AoE Spin!)
@@ -2618,7 +2671,7 @@ export class SamuraiGameEngine {
         this.comboStep = 0;
         this.heavyChainStage = 0;
         this.audio.playSpatial('iai_counter', this.playerPos, 1.15);
-        this.pushFeedback('CONTRATTACCO LAMPO', 'parry');
+        this.spawnPopup('CONTRATTACCO!', 'parry', this.playerPos, 2.15, 0.85);
         this.camFov = 57.2;
       } else if (this.combosUnlocked && this.comboStep === 1) {
         // L -> H sets up L-H-H (Giudizio dell'Eclissi)
@@ -2746,7 +2799,10 @@ export class SamuraiGameEngine {
     this.attackLungeSpeed = 0;
     this.hasHitThisAttack = false;
     this.bufferedAction = null;
-    this.bowCooldown = 10.0;
+    this.bowCharges = Math.max(0, this.bowCharges - 1);
+    if (this.bowRechargeTimer <= 0) {
+      this.bowRechargeTimer = 5.0;
+    }
 
     // Face locked enemy if locked, else movement direction or straight forward along camera yaw
     const locked = this.getLockedEnemy();
@@ -2799,7 +2855,6 @@ export class SamuraiGameEngine {
     this.spawnSparks(pos, 12, 0x38bdf8);
     this.spawnShockwave(this.playerPos, 0x38bdf8, 2.2, 0.22);
     this.audio.playSpatial('bow_shot', this.playerPos, 1.2);
-    this.pushFeedback('FRECCIA DI SAKIRO!', 'parry');
   }
 
   private performPlayerStrikeHitbox(): void {
@@ -2890,7 +2945,7 @@ export class SamuraiGameEngine {
         this.audio.playSpatial('block_clang', enemy.pos);
         enemy.posture = Math.min(enemy.maxPosture, enemy.posture + 14);
         enemy.knockbackVel.set(_v1.x * 4.5, 0, _v1.z * 4.5);
-        this.pushFeedback('PARATA NEMICA · USA PESANTE', 'story');
+        this.spawnPopup('PARATO · USA PESANTE', 'guard', enemy.pos, 2.05, 0.85);
         continue;
       }
 
@@ -2967,6 +3022,7 @@ export class SamuraiGameEngine {
     baseKnock: number,
     isCritical: boolean,
     canInterrupt: boolean,
+    hitTag?: string,
   ): void {
     if (canInterrupt && enemy.state === 'windup' && enemy.telegraph === 'normal') {
       enemy.state = 'recover';
@@ -2978,6 +3034,19 @@ export class SamuraiGameEngine {
     enemy.posture = Math.min(enemy.maxPosture, enemy.posture + postureDmg);
     enemy.hitFlashTimer = 0.14;
     enemy.hitStreak += 1;
+
+    const popupLabel = hitTag
+      ? `-${dmg} ${hitTag}`
+      : isCritical
+        ? `CRITICO -${dmg}!`
+        : `-${dmg}`;
+    this.spawnPopup(
+      popupLabel,
+      isCritical ? 'crit' : 'hit',
+      enemy.pos,
+      enemy.spec.isBoss ? 2.25 : 1.95,
+      0.9,
+    );
 
     // Ronin tactical guard reaction after absorbing 2 consecutive hits
     if (
@@ -3049,7 +3118,7 @@ export class SamuraiGameEngine {
       enemy.posture = enemy.maxPosture;
       this.spawnShockwave(enemy.pos, 0xd97706, 3.2, 0.3);
       this.audio.playSpatial('guard_break', enemy.pos);
-      this.pushFeedback('POSTURA SPEZZATA', 'break');
+      this.spawnPopup('POSTURA SPEZZATA!', 'break', enemy.pos, 2.35, 1.05);
     }
   }
 
@@ -3523,7 +3592,7 @@ export class SamuraiGameEngine {
         this.spawnShockwave(_v1.setY(0.1), 0x0284c7, 3.0, 0.28);
         this.audio.playSpatial('parry_perfect', _v1, 1.15);
         this.callbacks.onParryStat();
-        this.pushFeedback('PARATA PERFETTA · CONTRATTACCO!', 'parry');
+        this.spawnPopup('PARATA PERFETTA!', 'parry', this.playerPos, 2.2, 0.95);
 
         if (enemy.posture >= enemy.maxPosture) {
           enemy.state = 'stagger';
@@ -3531,7 +3600,7 @@ export class SamuraiGameEngine {
           enemy.telegraph = 'none';
           this.spawnShockwave(enemy.pos, 0xd97706, 3.4, 0.32);
           this.audio.playSpatial('guard_break', enemy.pos);
-          this.pushFeedback('POSTURA SPEZZATA', 'break');
+          this.spawnPopup('POSTURA SPEZZATA!', 'break', enemy.pos, 2.35, 1.05);
         } else {
           enemy.state = 'recover';
           enemy.stateTimer = 0.65;
@@ -3545,7 +3614,9 @@ export class SamuraiGameEngine {
       this.spawnSparks(_v1, 8, 0xfbbf24);
       this.audio.playSpatial('block_clang', _v1);
       this.playerPosture += 28;
-      this.playerHp = Math.max(0, this.playerHp - Math.round(enemy.spec.damage * 0.18));
+      const chipDmg = Math.round(enemy.spec.damage * 0.18);
+      this.playerHp = Math.max(0, this.playerHp - chipDmg);
+      this.spawnPopup(`-${chipDmg} HP (PARATO)`, 'damage', this.playerPos, 1.95, 0.85);
       this.playerKnockbackVel.set(_v3.x * 6.5, 0, _v3.z * 6.5);
       enemy.knockbackVel.set(-_v3.x * 3.2, 0, -_v3.z * 3.2);
 
@@ -3554,7 +3625,7 @@ export class SamuraiGameEngine {
         this.actionTimer = 0;
         this.actionDuration = 0.85;
         this.audio.playSpatial('guard_break', this.playerPos);
-        this.pushFeedback('GUARDIA SPEZZATA', 'damage');
+        this.spawnPopup('GUARDIA SPEZZATA!', 'damage', this.playerPos, 2.25, 1.05);
       }
       if (this.playerHp <= 0) this.handlePlayerDeath();
       return;
@@ -3569,7 +3640,7 @@ export class SamuraiGameEngine {
     _v1.copy(this.playerPos).setY(1.2);
     this.spawnSparks(_v1, 12, 0xe12d39);
     this.audio.playSpatial('hit_flesh', this.playerPos);
-    this.pushFeedback(`-${enemy.spec.damage} HP`, 'damage');
+    this.spawnPopup(`-${enemy.spec.damage} HP`, 'damage', this.playerPos, 2.05, 1.0);
 
     if (this.playerHp <= 0) {
       this.handlePlayerDeath();
@@ -4224,10 +4295,11 @@ export class SamuraiGameEngine {
             this.spawnShockwave(orb.pos, 0x38bdf8, 2.6, 0.25);
             this.audio.playSpatial('parry_perfect', orb.pos, 1.15);
             this.callbacks.onParryStat();
-            this.pushFeedback('MAGIA DEVIATA!', 'parry');
+            this.spawnPopup('MAGIA DEVIATA!', 'parry', this.playerPos, 2.2, 0.9);
           } else if (this.playerState === 'block') {
             this.playerPosture += 22;
             this.playerHp = Math.max(0, this.playerHp - 5);
+            this.spawnPopup('-5 HP (PARATO)', 'damage', this.playerPos, 1.95, 0.85);
             this.spawnSparks(orb.pos, 8, 0x8b5cf6);
             this.audio.playSpatial('block_clang', orb.pos);
             consumed = true;
@@ -4238,7 +4310,7 @@ export class SamuraiGameEngine {
             this.camShake = Math.max(this.camShake, 0.16);
             this.spawnSparks(orb.pos, 12, 0x8b5cf6);
             this.audio.playSpatial('hit_flesh', this.playerPos);
-            this.pushFeedback(`-${orb.damage} HP`, 'damage');
+            this.spawnPopup(`-${orb.damage} HP · MAGIA`, 'damage', this.playerPos, 2.05, 1.0);
             consumed = true;
             if (this.playerHp <= 0) this.handlePlayerDeath();
           }
@@ -4250,7 +4322,7 @@ export class SamuraiGameEngine {
           const dz = enemy.pos.z - orb.pos.z;
           if (dx * dx + dz * dz < 1.38 * 1.38) {
             _v2.copy(orb.dir);
-            this.applyHitToEnemy(enemy, 42, 46, _v2, 12.0, true, true);
+            this.applyHitToEnemy(enemy, 42, 46, _v2, 12.0, true, true, 'MAGIA');
             this.spawnSparks(orb.pos, 18, 0x38bdf8);
             this.spawnShockwave(enemy.pos, 0x38bdf8, 3.0, 0.28);
             consumed = true;
@@ -4301,7 +4373,7 @@ export class SamuraiGameEngine {
           else _v3.set(0, 0, 1);
           this.playerKnockbackVel.set(_v3.x * 12.5, 0, _v3.z * 12.5);
           this.audio.playSpatial('hit_flesh', this.playerPos);
-          this.pushFeedback(`-${m.damage} HP · IMPATTO METEORICO`, 'damage');
+          this.spawnPopup(`-${m.damage} HP · METEORA`, 'damage', this.playerPos, 2.1, 1.05);
           if (this.playerHp <= 0) {
             this.handlePlayerDeath();
           } else {
@@ -4344,10 +4416,11 @@ export class SamuraiGameEngine {
             this.spawnSparks(arr.pos, 14, 0x38bdf8);
             this.audio.playSpatial('parry_perfect', arr.pos, 1.1);
             this.callbacks.onParryStat();
-            this.pushFeedback('FRECCIA DEVIATA!', 'parry');
+            this.spawnPopup('FRECCIA DEVIATA!', 'parry', this.playerPos, 2.2, 0.9);
           } else if (this.playerState === 'block') {
             this.playerPosture += 20;
             this.playerHp = Math.max(0, this.playerHp - 5);
+            this.spawnPopup('-5 HP (PARATO)', 'damage', this.playerPos, 1.95, 0.85);
             this.spawnSparks(arr.pos, 8, 0xfbbf24);
             this.audio.playSpatial('block_clang', arr.pos);
             consumed = true;
@@ -4358,7 +4431,7 @@ export class SamuraiGameEngine {
             this.camShake = Math.max(this.camShake, 0.14);
             this.spawnSparks(arr.pos, 12, 0xf43f5e);
             this.audio.playSpatial('hit_flesh', this.playerPos);
-            this.pushFeedback(`-${arr.damage} HP · FRECCIA`, 'damage');
+            this.spawnPopup(`-${arr.damage} HP · FRECCIA`, 'damage', this.playerPos, 2.05, 1.0);
             consumed = true;
             if (this.playerHp <= 0) this.handlePlayerDeath();
           }
@@ -4370,7 +4443,7 @@ export class SamuraiGameEngine {
           const dz = enemy.pos.z - arr.pos.z;
           if (dx * dx + dz * dz < 1.3 * 1.3) {
             _v2.copy(arr.dir);
-            this.applyHitToEnemy(enemy, 38, 36, _v2, 9.0, true, false);
+            this.applyHitToEnemy(enemy, 38, 36, _v2, 9.0, true, false, 'FRECCIA');
             this.spawnSparks(arr.pos, 16, 0x38bdf8);
             consumed = true;
             break;
@@ -4416,6 +4489,7 @@ export class SamuraiGameEngine {
               11.5,
               isCritical,
               true,
+              'FRECCIA',
             );
             this.spawnSparks(arr.pos, 18, 0x38bdf8);
             this.spawnShockwave(enemy.pos, 0x38bdf8, 2.8, 0.26);
@@ -4471,7 +4545,7 @@ export class SamuraiGameEngine {
             else _v3.set(0, 0, 1);
             this.playerKnockbackVel.set(_v3.x * 13.0, 0, _v3.z * 13.0);
             this.audio.playSpatial('hit_flesh', this.playerPos);
-            this.pushFeedback(`-${b.damage} HP · ESPLOSIONE`, 'damage');
+            this.spawnPopup(`-${b.damage} HP · BOMBA`, 'damage', this.playerPos, 2.1, 1.05);
             if (this.playerHp <= 0) {
               this.handlePlayerDeath();
             } else {
@@ -4702,6 +4776,24 @@ export class SamuraiGameEngine {
       }
     }
 
+    const popups: CombatPopup[] = [];
+    for (const p of this.popups) {
+      _v1.copy(p.worldPos);
+      _v1.y += p.age * 1.15;
+      _v1.project(this.camera);
+      if (_v1.z > 1) continue;
+      const xPct = Math.max(8, Math.min(92, (_v1.x * 0.5 + 0.5) * 100 + p.screenOffsetX));
+      const yPct = Math.max(12, Math.min(86, (-_v1.y * 0.5 + 0.5) * 100));
+      popups.push({
+        id: p.id,
+        text: p.text,
+        kind: p.kind,
+        xPct,
+        yPct,
+        progress: Math.min(1, p.age / p.duration),
+      });
+    }
+
     this.callbacks.onHudUpdate({
       hp: Math.round(this.playerHp),
       maxHp: this.playerMaxHp,
@@ -4723,7 +4815,10 @@ export class SamuraiGameEngine {
       timeSlowRemaining: Number(this.timeSlowTimer.toFixed(1)),
       timeSlowCooldown: Math.ceil(this.timeSlowCooldown),
       bowUnlocked: this.bowUnlocked,
-      bowCooldown: Math.ceil(this.bowCooldown),
+      bowCharges: this.bowCharges,
+      bowMaxCharges: this.bowMaxCharges,
+      bowCooldown:
+        this.bowCharges < this.bowMaxCharges ? Math.ceil(this.bowRechargeTimer) : 0,
       levelIndex: this.currentLevelIndex,
       levelTitle: spec.title,
       checkpointIndex: this.currentCheckpointIndex,
@@ -4735,6 +4830,7 @@ export class SamuraiGameEngine {
       pointerLocked: this.input.pointerLocked,
       fpsEstimate: Math.round(this.fpsSamples),
       feedback: this.feedback,
+      popups,
       storySubtitle: this.storySubtitle,
     });
   }

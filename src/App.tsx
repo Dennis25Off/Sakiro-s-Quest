@@ -36,6 +36,8 @@ const INITIAL_HUD: HudSnapshot = {
   timeSlowRemaining: 0,
   timeSlowCooldown: 0,
   bowUnlocked: false,
+  bowCharges: 2,
+  bowMaxCharges: 2,
   bowCooldown: 0,
   levelIndex: 0,
   levelTitle: LEVELS[0].title,
@@ -48,6 +50,7 @@ const INITIAL_HUD: HudSnapshot = {
   pointerLocked: false,
   fpsEstimate: 60,
   feedback: null,
+  popups: [],
   storySubtitle: null,
 };
 

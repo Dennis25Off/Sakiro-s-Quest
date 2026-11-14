@@ -130,6 +130,15 @@ export interface CombatFeedback {
   kind: 'parry' | 'break' | 'checkpoint' | 'story' | 'damage' | 'chrono';
 }
 
+export interface CombatPopup {
+  id: number;
+  text: string;
+  kind: 'hit' | 'crit' | 'damage' | 'parry' | 'break' | 'guard';
+  xPct: number;
+  yPct: number;
+  progress: number;
+}
+
 export interface HudSnapshot {
   hp: number;
   maxHp: number;
@@ -151,6 +160,8 @@ export interface HudSnapshot {
   timeSlowRemaining: number;
   timeSlowCooldown: number;
   bowUnlocked: boolean;
+  bowCharges: number;
+  bowMaxCharges: number;
   bowCooldown: number;
   levelIndex: number;
   levelTitle: string;
@@ -163,5 +174,6 @@ export interface HudSnapshot {
   pointerLocked: boolean;
   fpsEstimate: number;
   feedback: CombatFeedback | null;
+  popups: CombatPopup[];
   storySubtitle: string | null;
 }

@@ -412,7 +412,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                 )}
                 {bowUnlocked && (
                   <div className="flex justify-between py-1.5 border-b border-[#E2E8F0]">
-                    <span className="text-[#D97706] font-medium">Arco di Sakiro (10s)</span>
+                    <span className="text-[#D97706] font-medium">Arco di Sakiro (2 frecce / 10s)</span>
                     <span className="font-mono-nums font-semibold text-[#D97706]">G / → D-Pad</span>
                   </div>
                 )}

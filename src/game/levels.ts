@@ -699,7 +699,7 @@ export const LEVELS: LevelSpec[] = [
     title: 'Santuario dell\'Eclissi',
     subtitle: 'Il Sovrano delle Mille Armi',
     chapterIntro:
-      'Con la Cronostasi (4s) e il nuovo Arco di Sakiro ([G], ricarica 10s), il protagonista entra nelle rovine infernali dell\'Eclissi per eliminare Kagetsu l\'Immortale.',
+      'Con la Cronostasi (4s) e il nuovo Arco di Sakiro ([G], 2 frecce in 10s), il protagonista entra nelle rovine infernali dell\'Eclissi per eliminare Kagetsu l\'Immortale.',
     skyColor: 0x240f16,
     fogColor: 0x1b0a0f,
     fogDensity: 0.011,
