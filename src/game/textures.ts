@@ -16,8 +16,10 @@ export interface GameMaterialLibrary {
   emberCrack: THREE.MeshStandardMaterial;
   parkourStone: THREE.MeshStandardMaterial;
   parkourBridge: THREE.MeshStandardMaterial;
-  streamWater: THREE.MeshStandardMaterial;
+  streamWater: THREE.MeshPhysicalMaterial;
   streamWaterTex: THREE.CanvasTexture;
+  streamWaterNormalTex: THREE.CanvasTexture;
+  updateWater: (elapsed: number) => void;
   lavaStream: THREE.MeshStandardMaterial;
   lavaStreamTex: THREE.CanvasTexture;
   treeBark: THREE.MeshStandardMaterial;
@@ -101,27 +103,87 @@ function makeWaterTexture(maxAniso: number): THREE.CanvasTexture {
   canvas.height = size;
   const ctx = canvas.getContext('2d')!;
 
+  // Rich depth gradient: darker bank transitions to luminous turquoise center channel
   const grad = ctx.createLinearGradient(0, 0, size, 0);
-  grad.addColorStop(0, '#0ea5e9');
-  grad.addColorStop(0.5, '#38bdf8');
-  grad.addColorStop(1, '#0284c7');
+  grad.addColorStop(0, '#075985');
+  grad.addColorStop(0.18, '#0284c7');
+  grad.addColorStop(0.5, '#0ea5e9');
+  grad.addColorStop(0.82, '#0284c7');
+  grad.addColorStop(1, '#075985');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
 
-  // Flowing ripple streaks along Y
-  for (let i = 0; i < 110; i++) {
-    const x = ((i * 53) % (size - 14)) + 4;
+  // Flowing multi-layered current streaks & subtle caustic ribbons
+  for (let i = 0; i < 150; i++) {
+    const x = ((i * 53) % (size - 16)) + 8;
     const y = (i * 97) % size;
-    const len = 26 + ((i * 19) % 42);
-    ctx.fillStyle = i % 3 === 0 ? 'rgba(255, 255, 255, 0.36)' : 'rgba(186, 230, 253, 0.25)';
-    ctx.fillRect(x, y, 2 + (i % 2), len);
+    const len = 24 + ((i * 19) % 48);
+    ctx.fillStyle =
+      i % 4 === 0
+        ? 'rgba(224, 242, 254, 0.34)'
+        : i % 2 === 0
+          ? 'rgba(125, 211, 252, 0.24)'
+          : 'rgba(12, 74, 110, 0.22)';
+    ctx.fillRect(x, y, 1.5 + (i % 3), len);
   }
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(2, 18);
+  tex.repeat.set(1, 16);
+  tex.anisotropy = maxAniso;
+  return tex;
+}
+
+function makeWaterNormalTexture(maxAniso: number): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const img = ctx.createImageData(size, size);
+  const data = img.data;
+  const twoPi = Math.PI * 2;
+
+  // Seamless periodic multi-octave heightfield converted to tangent-space normals
+  const heightAt = (u: number, v: number) => {
+    const w1 = Math.sin(twoPi * (u * 3 + v * 2));
+    const w2 = Math.cos(twoPi * (u * 5 - v * 4)) * 0.55;
+    const w3 = Math.sin(twoPi * (u * 8 + v * 7)) * 0.28;
+    const w4 = Math.cos(twoPi * (u * 2 + v * 11)) * 0.22;
+    return w1 + w2 + w3 + w4;
+  };
+
+  const eps = 1 / size;
+  for (let y = 0; y < size; y++) {
+    const v = y / size;
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const dhdu = (heightAt(u + eps, v) - heightAt(u - eps, v)) * 0.55;
+      const dhdv = (heightAt(u, v + eps) - heightAt(u, v - eps)) * 0.55;
+      let nx = -dhdu;
+      let ny = -dhdv;
+      let nz = 1.0;
+      const invLen = 1 / Math.sqrt(nx * nx + ny * ny + nz * nz);
+      nx *= invLen;
+      ny *= invLen;
+      nz *= invLen;
+
+      const idx = (y * size + x) * 4;
+      data[idx] = Math.round((nx * 0.5 + 0.5) * 255);
+      data[idx + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+      data[idx + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+      data[idx + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.NoColorSpace;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3, 20);
   tex.anisotropy = maxAniso;
   return tex;
 }
@@ -301,6 +363,7 @@ export function createMaterialLibrary(renderer: THREE.WebGLRenderer): GameMateri
   const crimsonTex = makeCeramicTileTexture('#2b2434', '#493c58', 'rgba(225, 45, 57, 0.36)', maxAniso);
   const sanctumTex = makeInfernalFloorTexture('#180b0e', 'rgba(5, 2, 4, 0.9)', '#f97316', '#fbbf24', maxAniso);
   const streamWaterTex = makeWaterTexture(maxAniso);
+  const streamWaterNormalTex = makeWaterNormalTexture(maxAniso);
   const lavaStreamTex = makeLavaTexture(maxAniso);
   const brushedTex = makeBrushedMetalTexture(maxAniso);
   const contactTex = makeContactShadowTexture();
@@ -397,14 +460,64 @@ export function createMaterialLibrary(renderer: THREE.WebGLRenderer): GameMateri
     metalness: 0.14,
   });
 
-  const streamWater = new THREE.MeshStandardMaterial({
+  const waterTimeUniform = { value: 0 };
+  const streamWater = new THREE.MeshPhysicalMaterial({
     map: streamWaterTex,
-    color: 0x38bdf8,
-    roughness: 0.14,
-    metalness: 0.28,
+    normalMap: streamWaterNormalTex,
+    normalScale: new THREE.Vector2(0.95, 0.95),
+    color: 0x0ea5e9,
+    roughness: 0.11,
+    metalness: 0.08,
+    clearcoat: 0.92,
+    clearcoatRoughness: 0.07,
+    reflectivity: 0.92,
     transparent: true,
-    opacity: 0.88,
+    opacity: 0.87,
   });
+  streamWater.customProgramCacheKey = () => 'sakiro_water_v1';
+  streamWater.onBeforeCompile = (shader) => {
+    shader.uniforms.uWaterTime = waterTimeUniform;
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+uniform float uWaterTime;
+varying vec2 vWaterUv;
+varying float vWaveCrest;`,
+      )
+      .replace(
+        '#include <begin_vertex>',
+        `#include <begin_vertex>
+vWaterUv = uv;
+float w1 = sin(position.x * 0.72 + uWaterTime * 2.2) * cos(position.y * 0.65 - uWaterTime * 1.9);
+float w2 = sin((position.x * 1.35 - position.y * 1.15) + uWaterTime * 3.2) * 0.45;
+transformed.z += (w1 + w2) * 0.055;
+vWaveCrest = clamp((w1 + w2) * 0.5 + 0.5, 0.0, 1.0);`,
+      );
+
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+uniform float uWaterTime;
+varying vec2 vWaterUv;
+varying float vWaveCrest;`,
+      )
+      .replace(
+        '#include <color_fragment>',
+        `#include <color_fragment>
+float shoreMask = 1.0 - smoothstep(0.0, 0.14, min(vWaterUv.x, 1.0 - vWaterUv.x));
+float caustic = sin(vWaterUv.x * 26.0 + uWaterTime * 2.1) * sin(vWaterUv.y * 110.0 - uWaterTime * 3.4);
+float shimmer = smoothstep(0.52, 0.96, caustic * 0.5 + 0.5);
+vec3 deepTint = vec3(0.02, 0.24, 0.42);
+vec3 crestTint = vec3(0.32, 0.84, 0.98);
+diffuseColor.rgb = mix(diffuseColor.rgb * 0.76 + deepTint * 0.34, crestTint, vWaveCrest * 0.34);
+diffuseColor.rgb += vec3(0.45, 0.9, 1.0) * shimmer * 0.14;
+float foamNoise = sin(vWaterUv.y * 140.0 - uWaterTime * 4.2) * 0.5 + 0.5;
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.98, 1.0), shoreMask * (0.36 + foamNoise * 0.32));
+diffuseColor.a = clamp(diffuseColor.a + shoreMask * 0.11, 0.78, 0.96);`,
+      );
+  };
 
   const lavaStream = new THREE.MeshStandardMaterial({
     map: lavaStreamTex,
@@ -578,6 +691,7 @@ export function createMaterialLibrary(renderer: THREE.WebGLRenderer): GameMateri
     crimsonTex,
     sanctumTex,
     streamWaterTex,
+    streamWaterNormalTex,
     lavaStreamTex,
     brushedTex,
     contactTex,
@@ -601,6 +715,10 @@ export function createMaterialLibrary(renderer: THREE.WebGLRenderer): GameMateri
     parkourBridge,
     streamWater,
     streamWaterTex,
+    streamWaterNormalTex,
+    updateWater: (elapsed: number) => {
+      waterTimeUniform.value = elapsed;
+    },
     lavaStream,
     lavaStreamTex,
     treeBark,

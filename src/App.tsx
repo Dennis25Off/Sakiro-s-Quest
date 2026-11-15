@@ -5,15 +5,35 @@
 
 import { AnimatePresence, motion } from 'motion/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { DaimokuOverlay } from './components/DaimokuOverlay';
 import { GameHud } from './components/GameHud';
 import { OutcomeOverlay } from './components/OutcomeOverlay';
 import { PauseOverlay } from './components/PauseOverlay';
+import { OfflineIndicator } from './components/PWAInstallButton';
 import { StartMenu } from './components/StartMenu';
+import { StoryIntroOverlay } from './components/StoryIntroOverlay';
 import { SECRET_COMBOS } from './game/combos';
 import { SamuraiGameEngine } from './game/engine';
 import { LEVELS } from './game/levels';
-import { loadSaveData, persistSaveData, resetSaveData } from './game/saveSystem';
-import { GameScreen, HudSnapshot, QualityPreset, SaveData } from './game/types';
+import {
+  DAIMOKU_UPGRADE_SPECS,
+  DEFAULT_DAIMOKU_UPGRADES,
+  getDaimokuUpgradeCost,
+  loadAudioSettings,
+  loadSaveData,
+  loadVideoSettings,
+  persistAudioSettings,
+  persistSaveData,
+  persistVideoSettings,
+  resetSaveData,
+} from './game/saveSystem';
+import {
+  DaimokuStatId,
+  GameScreen,
+  HudSnapshot,
+  SaveData,
+  VideoSettings,
+} from './game/types';
 
 const INITIAL_HUD: HudSnapshot = {
   hp: 100,
@@ -22,6 +42,10 @@ const INITIAL_HUD: HudSnapshot = {
   maxPosture: 100,
   stamina: 100,
   maxStamina: 100,
+  healCharges: 1,
+  healMaxCharges: 1,
+  energyOrbs: 0,
+  daimoku: { ...DEFAULT_DAIMOKU_UPGRADES },
   isBlocking: false,
   isLockedOn: false,
   isAirborne: false,
@@ -36,8 +60,8 @@ const INITIAL_HUD: HudSnapshot = {
   timeSlowRemaining: 0,
   timeSlowCooldown: 0,
   bowUnlocked: false,
-  bowCharges: 2,
-  bowMaxCharges: 2,
+  bowCharges: 5,
+  bowMaxCharges: 5,
   bowCooldown: 0,
   levelIndex: 0,
   levelTitle: LEVELS[0].title,
@@ -52,6 +76,9 @@ const INITIAL_HUD: HudSnapshot = {
   feedback: null,
   popups: [],
   storySubtitle: null,
+  damageFlash: 0,
+  lastDamageAmount: 0,
+  damageSide: 'none',
 };
 
 export default function App() {
@@ -63,11 +90,23 @@ export default function App() {
   const [screen, setScreen] = useState<GameScreen>('menu');
   const [save, setSave] = useState<SaveData>(() => loadSaveData());
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
-  const [qualityPreset, setQualityPreset] = useState<QualityPreset>('auto');
-  const [audioVolume, setAudioVolume] = useState(0.85);
-  const [audioMuted, setAudioMuted] = useState(false);
-  const [binauralEnabled, setBinauralEnabled] = useState(true);
+  const [videoSettings, setVideoSettings] = useState<VideoSettings>(() => loadVideoSettings());
+  const initialAudioRef = useRef(loadAudioSettings());
+  const [audioVolume, setAudioVolume] = useState(initialAudioRef.current.volume);
+  const [audioMuted, setAudioMuted] = useState(initialAudioRef.current.muted);
+  const [binauralEnabled, setBinauralEnabled] = useState(
+    initialAudioRef.current.binauralEnabled,
+  );
+  const [showControlsGuide, setShowControlsGuide] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('sakiro_show_controls_v1');
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
   const [introPlaying, setIntroPlaying] = useState(false);
+  const [storyIntroActive, setStoryIntroActive] = useState(false);
   const [transitionVeil, setTransitionVeil] = useState<{
     active: boolean;
     code?: string;
@@ -77,6 +116,10 @@ export default function App() {
 
   const saveRef = useRef<SaveData>(save);
   saveRef.current = save;
+  const screenRef = useRef<GameScreen>(screen);
+  screenRef.current = screen;
+  const storyIntroRef = useRef<boolean>(storyIntroActive);
+  storyIntroRef.current = storyIntroActive;
 
   const updateSave = useCallback((updater: (prev: SaveData) => SaveData) => {
     const next = persistSaveData(updater(saveRef.current));
@@ -124,7 +167,7 @@ export default function App() {
         updateSave((prev) => {
           const nextLevel = Math.min(LEVELS.length - 1, completedIndex + 1);
           const unlockedTimeSlow = prev.timeSlowUnlocked || completedIndex >= 4;
-          const unlockedBow = prev.bowUnlocked || completedIndex >= 4;
+          const unlockedBow = prev.bowUnlocked || completedIndex >= 5;
           const finishedFullStory = completedIndex >= LEVELS.length - 1;
           return {
             ...prev,
@@ -140,17 +183,36 @@ export default function App() {
       onPlayerDefeated: () => {
         setScreen('defeat');
       },
+      onEnergyChanged: (orbs) => {
+        updateSave((prev) => ({
+          ...prev,
+          energyOrbs: Math.max(0, Math.floor(orbs)),
+        }));
+      },
+      onOpenDaimoku: () => {
+        if (screenRef.current !== 'playing' || storyIntroRef.current) return;
+        engineRef.current?.setScreenMode('daimoku');
+        setScreen('daimoku');
+      },
     });
 
     engineRef.current = engine;
+    const initVideo = loadVideoSettings();
+    const initAudio = initialAudioRef.current;
+    engine.setVideoSettings(initVideo);
+    engine.audio.setVolume(initAudio.volume);
+    engine.audio.setMuted(initAudio.muted);
+    engine.audio.setBinauralEnabled(initAudio.binauralEnabled);
     engine.setProgressionState(
       saveRef.current.unlockedLevel >= 1 || saveRef.current.levelIndex >= 1,
       saveRef.current.discoveredCombos,
       saveRef.current.timeSlowUnlocked || saveRef.current.storyCompleted,
       saveRef.current.bowUnlocked ||
         saveRef.current.storyCompleted ||
-        saveRef.current.unlockedLevel >= 5 ||
-        saveRef.current.levelIndex >= 5,
+        saveRef.current.unlockedLevel >= 6 ||
+        saveRef.current.levelIndex >= 6,
+      saveRef.current.energyOrbs,
+      saveRef.current.daimoku,
     );
     engine.loadLevel(saveRef.current.levelIndex, saveRef.current.checkpointIndex, true);
     engine.setScreenMode('menu');
@@ -159,8 +221,8 @@ export default function App() {
     const intro = new Audio('/assets/aistudio/Project_46_cd633279.mp3');
     intro.loop = true;
     intro.preload = 'auto';
-    intro.volume = audioVolume * 0.65;
-    intro.muted = audioMuted;
+    intro.volume = initAudio.volume * 0.65;
+    intro.muted = initAudio.muted;
     intro.addEventListener('play', () => setIntroPlaying(true));
     intro.addEventListener('pause', () => setIntroPlaying(false));
     introAudioRef.current = intro;
@@ -170,8 +232,8 @@ export default function App() {
       const track = new Audio(src);
       track.loop = true;
       track.preload = 'auto';
-      track.volume = audioVolume * 0.48;
-      track.muted = audioMuted;
+      track.volume = initAudio.volume * 0.48;
+      track.muted = initAudio.muted;
       return track;
     };
 
@@ -248,7 +310,8 @@ export default function App() {
     const trackEntries = Object.entries(bossTracks);
     if (trackEntries.length === 0) return;
 
-    const isGameplayActive = screen === 'playing' || screen === 'paused';
+    const isGameplayActive =
+      screen === 'playing' || screen === 'paused' || screen === 'daimoku';
     let activeTrack: HTMLAudioElement | null = null;
 
     trackEntries.forEach(([lvlStr, track]) => {
@@ -266,7 +329,7 @@ export default function App() {
     if (!activeTrack) return;
     const currentTrack: HTMLAudioElement = activeTrack;
 
-    if (screen === 'paused') {
+    if (screen === 'paused' || screen === 'daimoku') {
       currentTrack.pause();
       return;
     }
@@ -340,11 +403,14 @@ export default function App() {
           save.timeSlowUnlocked || save.storyCompleted || save.levelIndex >= 5,
           save.bowUnlocked ||
             save.storyCompleted ||
-            save.unlockedLevel >= 5 ||
-            save.levelIndex >= 5,
+            save.unlockedLevel >= 6 ||
+            save.levelIndex >= 6,
+          save.energyOrbs,
+          save.daimoku,
         );
         eng.loadLevel(save.levelIndex, save.checkpointIndex, false);
         eng.setScreenMode('playing');
+        setStoryIntroActive(false);
         setScreen('playing');
       },
       { code: spec.code, title: spec.title },
@@ -361,14 +427,48 @@ export default function App() {
         setSave(fresh);
         const eng = engineRef.current;
         if (!eng) return;
-        eng.setProgressionState(false, [], false, false);
+        eng.setProgressionState(false, [], false, false, fresh.energyOrbs, fresh.daimoku);
         eng.loadLevel(0, 0, false);
         eng.setScreenMode('playing');
+        eng.startIntroCutscene();
+        setStoryIntroActive(true);
         setScreen('playing');
       },
       { code: spec.code, title: spec.title },
     );
   };
+
+  const handleReplayIntro = () => {
+    unlockAudio();
+    runSceneTransition(
+      () => {
+        const eng = engineRef.current;
+        if (!eng) return;
+        eng.setProgressionState(
+          saveRef.current.unlockedLevel >= 1 || saveRef.current.levelIndex >= 1,
+          saveRef.current.discoveredCombos,
+          saveRef.current.timeSlowUnlocked || saveRef.current.storyCompleted,
+          saveRef.current.bowUnlocked ||
+            saveRef.current.storyCompleted ||
+            saveRef.current.unlockedLevel >= 6 ||
+            saveRef.current.levelIndex >= 6,
+          saveRef.current.energyOrbs,
+          saveRef.current.daimoku,
+        );
+        eng.loadLevel(0, 0, false);
+        eng.setScreenMode('playing');
+        eng.startIntroCutscene();
+        setStoryIntroActive(true);
+        setScreen('playing');
+      },
+      { code: 'PROLOGO', title: 'La Vendetta di Sakiro' },
+    );
+  };
+
+  const handleFinishStoryIntro = useCallback(() => {
+    setStoryIntroActive(false);
+    engineRef.current?.stopIntroCutscene();
+  }, []);
 
   const handleStartLevel = (levelIndex: number) => {
     unlockAudio();
@@ -380,7 +480,7 @@ export default function App() {
           levelIndex,
           checkpointIndex: 0,
           unlockedLevel: Math.max(prev.unlockedLevel, levelIndex),
-          playerHp: 100,
+          playerHp: 100 + prev.daimoku.vitalityLevel * 20,
         }));
         const eng = engineRef.current;
         if (!eng) return;
@@ -390,11 +490,14 @@ export default function App() {
           saveRef.current.timeSlowUnlocked || saveRef.current.storyCompleted || levelIndex >= 5,
           saveRef.current.bowUnlocked ||
             saveRef.current.storyCompleted ||
-            saveRef.current.unlockedLevel >= 5 ||
-            levelIndex >= 5,
+            saveRef.current.unlockedLevel >= 6 ||
+            levelIndex >= 6,
+          saveRef.current.energyOrbs,
+          saveRef.current.daimoku,
         );
         eng.loadLevel(levelIndex, 0, false);
         eng.setScreenMode('playing');
+        setStoryIntroActive(false);
         setScreen('playing');
       },
       { code: spec.code, title: spec.title },
@@ -405,30 +508,54 @@ export default function App() {
     engineRef.current?.loadLevel(levelIndex, 0, true);
   };
 
-  const handleChangeQuality = (preset: QualityPreset) => {
-    setQualityPreset(preset);
-    engineRef.current?.setQualityPreset(preset);
-  };
+  const handleChangeVideo = useCallback((next: VideoSettings) => {
+    const saved = persistVideoSettings(next);
+    setVideoSettings(saved);
+    engineRef.current?.setVideoSettings(saved);
+  }, []);
+
+  const handleToggleControlsGuide = useCallback(() => {
+    setShowControlsGuide((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('sakiro_show_controls_v1', String(next));
+      } catch {
+        // Ignore storage write errors
+      }
+      return next;
+    });
+  }, []);
 
   const handleChangeAudio = (opts: { volume?: number; muted?: boolean; binaural?: boolean }) => {
     unlockAudio();
     const eng = engineRef.current;
-    if (!eng) return;
+    const nextVol = opts.volume !== undefined ? opts.volume : audioVolume;
+    const nextMuted = opts.muted !== undefined ? opts.muted : audioMuted;
+    const nextBin = opts.binaural !== undefined ? opts.binaural : binauralEnabled;
     if (opts.volume !== undefined) {
       setAudioVolume(opts.volume);
-      eng.audio.setVolume(opts.volume);
+      eng?.audio.setVolume(opts.volume);
     }
     if (opts.muted !== undefined) {
       setAudioMuted(opts.muted);
-      eng.audio.setMuted(opts.muted);
+      eng?.audio.setMuted(opts.muted);
     }
     if (opts.binaural !== undefined) {
       setBinauralEnabled(opts.binaural);
-      eng.audio.setBinauralEnabled(opts.binaural);
+      eng?.audio.setBinauralEnabled(opts.binaural);
     }
+    persistAudioSettings({
+      volume: nextVol,
+      muted: nextMuted,
+      binauralEnabled: nextBin,
+    });
   };
 
   const handlePause = () => {
+    if (storyIntroActive) {
+      setStoryIntroActive(false);
+      engineRef.current?.stopIntroCutscene();
+    }
     engineRef.current?.setScreenMode('paused');
     setScreen('paused');
   };
@@ -438,6 +565,51 @@ export default function App() {
     engineRef.current?.setScreenMode('playing');
     setScreen('playing');
   };
+
+  const handleOpenDaimoku = useCallback(() => {
+    if (screenRef.current !== 'playing' || storyIntroRef.current) return;
+    unlockAudio();
+    engineRef.current?.setScreenMode('daimoku');
+    setScreen('daimoku');
+  }, []);
+
+  const handleCloseDaimoku = useCallback(() => {
+    if (screenRef.current !== 'daimoku') return;
+    unlockAudio();
+    engineRef.current?.setScreenMode('playing');
+    setScreen('playing');
+  }, []);
+
+  const handleUpgradeDaimoku = useCallback(
+    (statId: DaimokuStatId) => {
+      if (screenRef.current !== 'daimoku') return;
+      const spec = DAIMOKU_UPGRADE_SPECS.find((s) => s.id === statId);
+      if (!spec) return;
+      const current = saveRef.current;
+      const currentLevel = current.daimoku[spec.key];
+      const cost = getDaimokuUpgradeCost(statId, currentLevel);
+      if (cost === null || current.energyOrbs < cost) return;
+
+      const nextDaimoku = {
+        ...current.daimoku,
+        [spec.key]: currentLevel + 1,
+      };
+      const nextOrbs = current.energyOrbs - cost;
+      const nextHpBonus = statId === 'vitality' ? 20 : 0;
+      const nextMaxHp = 100 + nextDaimoku.vitalityLevel * 20;
+
+      updateSave((prev) => ({
+        ...prev,
+        energyOrbs: nextOrbs,
+        daimoku: nextDaimoku,
+        playerHp: Math.min(nextMaxHp, prev.playerHp + nextHpBonus),
+      }));
+
+      engineRef.current?.setEnergyOrbs(nextOrbs);
+      engineRef.current?.applyDaimokuState(nextDaimoku, true);
+    },
+    [updateSave],
+  );
 
   const handleReloadCheckpoint = () => {
     unlockAudio();
@@ -452,11 +624,14 @@ export default function App() {
           save.timeSlowUnlocked || save.storyCompleted || save.levelIndex >= 5,
           save.bowUnlocked ||
             save.storyCompleted ||
-            save.unlockedLevel >= 5 ||
-            save.levelIndex >= 5,
+            save.unlockedLevel >= 6 ||
+            save.levelIndex >= 6,
+          save.energyOrbs,
+          save.daimoku,
         );
         eng.loadLevel(save.levelIndex, save.checkpointIndex, false);
         eng.setScreenMode('playing');
+        setStoryIntroActive(false);
         setScreen('playing');
       },
       { code: spec.code, title: spec.checkpoints[save.checkpointIndex]?.name ?? spec.title },
@@ -464,6 +639,7 @@ export default function App() {
   };
 
   const handleExitToMenu = () => {
+    setStoryIntroActive(false);
     runSceneTransition(() => {
       const eng = engineRef.current;
       if (!eng) return;
@@ -498,16 +674,19 @@ export default function App() {
               save={save}
               gamepadConnected={hud.gamepadConnected}
               gamepadName={hud.gamepadName}
-              qualityPreset={qualityPreset}
+              videoSettings={videoSettings}
               audioVolume={audioVolume}
               audioMuted={audioMuted}
               binauralEnabled={binauralEnabled}
+              showControlsGuide={showControlsGuide}
               introPlaying={introPlaying}
               onContinue={handleContinue}
               onNewGame={handleNewGame}
+              onReplayIntro={handleReplayIntro}
               onStartLevel={handleStartLevel}
-              onChangeQuality={handleChangeQuality}
+              onChangeVideo={handleChangeVideo}
               onChangeAudio={handleChangeAudio}
+              onToggleControlsGuide={handleToggleControlsGuide}
               onPreviewLevel={handlePreviewLevel}
             />
           </motion.div>
@@ -522,8 +701,34 @@ export default function App() {
             transition={{ duration: 0.35 }}
             className="fixed inset-0 z-10 pointer-events-none"
           >
-            <GameHud hud={hud} onPause={handlePause} />
+            {storyIntroActive ? (
+              <StoryIntroOverlay
+                active={storyIntroActive}
+                gamepadConnected={hud.gamepadConnected}
+                onFinish={handleFinishStoryIntro}
+              />
+            ) : (
+              <GameHud
+                hud={hud}
+                showControlsGuide={showControlsGuide}
+                onToggleControlsGuide={handleToggleControlsGuide}
+                onOpenDaimoku={handleOpenDaimoku}
+                onPause={handlePause}
+              />
+            )}
           </motion.div>
+        )}
+
+        {screen === 'daimoku' && (
+          <DaimokuOverlay
+            key="daimoku"
+            energyOrbs={save.energyOrbs}
+            daimoku={save.daimoku}
+            levelTitle={hud.levelTitle}
+            gamepadConnected={hud.gamepadConnected}
+            onUpgrade={handleUpgradeDaimoku}
+            onClose={handleCloseDaimoku}
+          />
         )}
 
         {screen === 'paused' && (
@@ -531,18 +736,22 @@ export default function App() {
             key="paused"
             levelTitle={hud.levelTitle}
             checkpointName={hud.checkpointName}
-            qualityPreset={qualityPreset}
+            videoSettings={videoSettings}
+            audioVolume={audioVolume}
             audioMuted={audioMuted}
             binauralEnabled={binauralEnabled}
+            showControlsGuide={showControlsGuide}
             combosUnlocked={save.unlockedLevel >= 1 || hud.levelIndex >= 1}
             discoveredCombos={save.discoveredCombos}
             gamepadConnected={hud.gamepadConnected}
             onResume={handleResume}
             onReloadCheckpoint={handleReloadCheckpoint}
             onExitToMenu={handleExitToMenu}
-            onChangeQuality={handleChangeQuality}
+            onChangeVideo={handleChangeVideo}
+            onChangeVolume={(vol) => handleChangeAudio({ volume: vol, muted: false })}
             onToggleMute={() => handleChangeAudio({ muted: !audioMuted })}
             onToggleBinaural={() => handleChangeAudio({ binaural: !binauralEnabled })}
+            onToggleControlsGuide={handleToggleControlsGuide}
           />
         )}
 
@@ -595,6 +804,7 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+      <OfflineIndicator />
     </div>
   );
 }

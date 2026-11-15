@@ -1,6 +1,35 @@
-export type GameScreen = 'menu' | 'playing' | 'paused' | 'defeat' | 'victory';
+export type GameScreen = 'menu' | 'playing' | 'paused' | 'daimoku' | 'defeat' | 'victory';
+
+export type DaimokuStatId = 'attack' | 'vitality' | 'stamina' | 'posture' | 'elixir';
+
+export interface DaimokuUpgrades {
+  attackLevel: number;
+  vitalityLevel: number;
+  staminaLevel: number;
+  postureLevel: number;
+  elixirLevel: number;
+}
 
 export type QualityPreset = 'auto' | 'low' | 'balanced' | 'high';
+
+export type ShadowQuality = 'off' | 'standard' | 'ultra';
+export type RenderScale = 'low' | 'native' | 'ultra';
+export type EffectsDensity = 'low' | 'normal' | 'high';
+
+export interface VideoSettings {
+  qualityPreset: QualityPreset;
+  fov: number;
+  shadowQuality: ShadowQuality;
+  renderScale: RenderScale;
+  effectsDensity: EffectsDensity;
+  cameraShake: boolean;
+}
+
+export interface AudioSettings {
+  volume: number;
+  muted: boolean;
+  binauralEnabled: boolean;
+}
 
 export type EnemyArchetype = 'ronin' | 'shinobi' | 'enforcer' | 'boss';
 
@@ -11,7 +40,10 @@ export type SecretComboId =
   | 'breaker'
   | 'tempest_whirl'
   | 'shadow_pierce'
-  | 'eclipse_judgment';
+  | 'eclipse_judgment'
+  | 'moon_crescent'
+  | 'thunder_descent'
+  | 'dragon_fang';
 
 export interface SaveData {
   version: number;
@@ -25,6 +57,8 @@ export interface SaveData {
   timeSlowUnlocked: boolean;
   bowUnlocked: boolean;
   discoveredCombos: SecretComboId[];
+  energyOrbs: number;
+  daimoku: DaimokuUpgrades;
   updatedAt: number;
 }
 
@@ -36,6 +70,10 @@ export interface ParkourPlatformSpec {
   h: number;
   d: number;
   kind?: 'stone' | 'bridge' | 'pillar';
+  moveAxis?: 'x' | 'y';
+  moveAmp?: number;
+  moveSpeed?: number;
+  movePhase?: number;
 }
 
 export interface ParkourSectionSpec {
@@ -127,7 +165,7 @@ export interface EnemyHudInfo {
 export interface CombatFeedback {
   id: number;
   label: string;
-  kind: 'parry' | 'break' | 'checkpoint' | 'story' | 'damage' | 'chrono';
+  kind: 'parry' | 'break' | 'checkpoint' | 'story' | 'damage' | 'chrono' | 'special' | 'heal';
 }
 
 export interface CombatPopup {
@@ -139,6 +177,8 @@ export interface CombatPopup {
   progress: number;
 }
 
+export type DamageDirection = 'none' | 'front' | 'back' | 'left' | 'right' | 'all';
+
 export interface HudSnapshot {
   hp: number;
   maxHp: number;
@@ -146,6 +186,10 @@ export interface HudSnapshot {
   maxPosture: number;
   stamina: number;
   maxStamina: number;
+  healCharges: number;
+  healMaxCharges: number;
+  energyOrbs: number;
+  daimoku: DaimokuUpgrades;
   isBlocking: boolean;
   isLockedOn: boolean;
   isAirborne: boolean;
@@ -157,6 +201,7 @@ export interface HudSnapshot {
   comboHint: string | null;
   timeSlowUnlocked: boolean;
   timeSlowActive: boolean;
+  parrySlowActive?: boolean;
   timeSlowRemaining: number;
   timeSlowCooldown: number;
   bowUnlocked: boolean;
@@ -176,4 +221,7 @@ export interface HudSnapshot {
   feedback: CombatFeedback | null;
   popups: CombatPopup[];
   storySubtitle: string | null;
+  damageFlash: number;
+  lastDamageAmount: number;
+  damageSide: DamageDirection;
 }

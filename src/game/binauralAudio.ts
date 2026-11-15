@@ -25,7 +25,10 @@ export type SpatialSoundType =
   | 'bomb_throw'
   | 'bomb_explode'
   | 'time_slow'
-  | 'phase_shift';
+  | 'phase_shift'
+  | 'heal'
+  | 'orb_pickup'
+  | 'daimoku_upgrade';
 
 const _fwd = new THREE.Vector3();
 const _up = new THREE.Vector3();
@@ -357,6 +360,17 @@ export class BinauralAudioEngine {
         break;
       case 'phase_shift':
         this.synthPhaseShift(ctx, outNode, now);
+        break;
+      case 'heal':
+        this.synthHealChime(ctx, outNode, now);
+        break;
+      case 'orb_pickup':
+        this.synthOrbPickup(ctx, outNode, now);
+        maxCleanupMs = 550;
+        break;
+      case 'daimoku_upgrade':
+        this.synthDaimokuUpgrade(ctx, outNode, now);
+        maxCleanupMs = 1200;
         break;
     }
 
@@ -813,6 +827,68 @@ export class BinauralAudioEngine {
       g.connect(out);
       osc.start(t + i * 0.04);
       osc.stop(t + 0.62);
+    });
+  }
+
+  private synthHealChime(ctx: AudioContext, out: AudioNode, t: number): void {
+    // Lush emerald ascending harmonic wash
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    notes.forEach((freq, idx) => {
+      const start = t + idx * 0.065;
+      const osc = ctx.createOscillator();
+      osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
+      osc.frequency.setValueAtTime(freq, start);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.015, start + 0.55);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, start);
+      g.gain.linearRampToValueAtTime(0.16, start + 0.03);
+      g.gain.exponentialRampToValueAtTime(0.0008, start + 0.68);
+
+      osc.connect(g);
+      g.connect(out);
+      osc.start(start);
+      osc.stop(start + 0.72);
+    });
+  }
+
+  private synthOrbPickup(ctx: AudioContext, out: AudioNode, t: number): void {
+    const base = 740 + Math.random() * 140;
+    [base, base * 1.498].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t + idx * 0.03);
+      osc.frequency.exponentialRampToValueAtTime(freq * 1.18, t + 0.22);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, t + idx * 0.03);
+      g.gain.linearRampToValueAtTime(idx === 0 ? 0.11 : 0.07, t + idx * 0.03 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0008, t + 0.28);
+
+      osc.connect(g);
+      g.connect(out);
+      osc.start(t + idx * 0.03);
+      osc.stop(t + 0.32);
+    });
+  }
+
+  private synthDaimokuUpgrade(ctx: AudioContext, out: AudioNode, t: number): void {
+    const notes = [440, 554.37, 659.25, 880, 1108.73];
+    notes.forEach((freq, idx) => {
+      const start = t + idx * 0.055;
+      const osc = ctx.createOscillator();
+      osc.type = idx % 2 === 0 ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(freq, start);
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.001, start);
+      g.gain.linearRampToValueAtTime(0.15, start + 0.025);
+      g.gain.exponentialRampToValueAtTime(0.0008, start + 0.72);
+
+      osc.connect(g);
+      g.connect(out);
+      osc.start(start);
+      osc.stop(start + 0.78);
     });
   }
 

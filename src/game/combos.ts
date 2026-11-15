@@ -44,6 +44,27 @@ export const SECRET_COMBOS: SecretComboMeta[] = [
     sequenceGp: 'X · Y · Y',
     effect: 'Schianto finale con ampia onda d’urto d’area.',
   },
+  {
+    id: 'moon_crescent',
+    name: 'Falce Lunare',
+    sequencePc: 'H · H',
+    sequenceGp: 'Y · Y',
+    effect: 'Lancia una mezzaluna energetica azzurra che trafigge a distanza.',
+  },
+  {
+    id: 'thunder_descent',
+    name: 'Furia del Tuono',
+    sequencePc: 'Salta · H',
+    sequenceGp: 'A · Y',
+    effect: 'Schianto fulmineo dall’alto con onda d’urto elettrica d’area.',
+  },
+  {
+    id: 'dragon_fang',
+    name: 'Zanna del Drago',
+    sequencePc: 'H · L · H',
+    sequenceGp: 'Y · X · Y',
+    effect: 'Affondo a spirale draconica che frantuma ogni difesa.',
+  },
 ];
 
 export const SECRET_COMBO_MAP: Record<SecretComboId, SecretComboMeta> = SECRET_COMBOS.reduce(

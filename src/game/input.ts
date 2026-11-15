@@ -11,11 +11,34 @@ export interface UnifiedInput {
   jumpPressed: boolean;
   bowPressed: boolean;
   timeSlowPressed: boolean;
+  healPressed: boolean;
   lockOnPressed: boolean;
+  cycleTargetPressed: boolean;
+  cycleTargetDir: -1 | 0 | 1;
+  daimokuPressed: boolean;
   pausePressed: boolean;
   gamepadConnected: boolean;
   gamepadName: string;
 }
+
+interface GamepadHapticActuatorLike {
+  playEffect?: (
+    type: string,
+    params: {
+      startDelay: number;
+      duration: number;
+      weakMagnitude: number;
+      strongMagnitude: number;
+    },
+  ) => Promise<string>;
+  pulse?: (value: number, duration: number) => Promise<boolean>;
+  reset?: () => Promise<string>;
+}
+
+type GamepadWithHaptics = Omit<Gamepad, 'vibrationActuator'> & {
+  vibrationActuator?: GamepadHapticActuatorLike;
+  hapticActuators?: GamepadHapticActuatorLike[];
+};
 
 export class InputManager {
   private keys = new Set<string>();
@@ -27,14 +50,20 @@ export class InputManager {
   private pendingJump = false;
   private pendingBow = false;
   private pendingTimeSlow = false;
+  private pendingHeal = false;
   private pendingLockOn = false;
+  private pendingCycleTarget = false;
+  private pendingDaimoku = false;
   private pendingPause = false;
   private accumCamX = 0;
   private accumCamY = 0;
   private prevBlockHeld = false;
 
-  // Gamepad previous-frame button states for edge detection
+  // Gamepad previous-frame button states & haptic throttling
   private prevPadButtons: boolean[] = new Array(18).fill(false);
+  private rightStickCooldown = 0;
+  private rumbleUntilMs = 0;
+  private rumblePriority = 0;
   private draggingCamera = false;
   private lastPointerX = 0;
   private lastPointerY = 0;
@@ -70,9 +99,18 @@ export class InputManager {
     if (e.code === 'KeyT') {
       this.pendingTimeSlow = true;
     }
+    if (e.code === 'KeyX') {
+      this.pendingHeal = true;
+    }
     if (e.code === 'Tab' || e.code === 'KeyR') {
       e.preventDefault();
       this.pendingLockOn = true;
+    }
+    if (e.code === 'KeyZ') {
+      this.pendingCycleTarget = true;
+    }
+    if (e.code === 'KeyU') {
+      this.pendingDaimoku = true;
     }
   };
 
@@ -137,6 +175,13 @@ export class InputManager {
     }
   };
 
+  private onWheel = (e: WheelEvent) => {
+    if (!this.isGameplayActive) return;
+    if (Math.abs(e.deltaY) >= 4) {
+      this.pendingCycleTarget = true;
+    }
+  };
+
   private onPointerLockChange = () => {
     this.pointerLocked = document.pointerLockElement === this.canvas;
   };
@@ -154,21 +199,91 @@ export class InputManager {
     window.addEventListener('mousedown', this.onMouseDown);
     window.addEventListener('mouseup', this.onMouseUp);
     window.addEventListener('mousemove', this.onMouseMove);
+    window.addEventListener('wheel', this.onWheel, { passive: true });
     window.addEventListener('contextmenu', this.onContextMenu);
     window.addEventListener('blur', this.onBlur);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
   }
 
   public detach(): void {
+    this.stopRumble();
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('mousedown', this.onMouseDown);
     window.removeEventListener('mouseup', this.onMouseUp);
     window.removeEventListener('mousemove', this.onMouseMove);
+    window.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('contextmenu', this.onContextMenu);
     window.removeEventListener('blur', this.onBlur);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     this.canvas = null;
+  }
+
+  public rumble(
+    strongMagnitude: number,
+    weakMagnitude: number,
+    durationMs: number,
+    priority = 1,
+  ): void {
+    const now = performance.now();
+    if (now < this.rumbleUntilMs && priority < this.rumblePriority) {
+      return;
+    }
+
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pad = pads
+      ? (Array.from(pads).find((p) => p && p.connected) as GamepadWithHaptics | undefined)
+      : undefined;
+    if (!pad) return;
+
+    const strong = Math.max(0, Math.min(1, strongMagnitude));
+    const weak = Math.max(0, Math.min(1, weakMagnitude));
+    const dur = Math.max(20, Math.min(1200, Math.round(durationMs)));
+
+    this.rumbleUntilMs = now + dur;
+    this.rumblePriority = priority;
+
+    try {
+      if (pad.vibrationActuator?.playEffect) {
+        const res = pad.vibrationActuator.playEffect('dual-rumble', {
+          startDelay: 0,
+          duration: dur,
+          strongMagnitude: strong,
+          weakMagnitude: weak,
+        });
+        if (res && typeof res.catch === 'function') {
+          res.catch(() => {});
+        }
+      } else if (pad.hapticActuators && pad.hapticActuators.length > 0) {
+        const actuator = pad.hapticActuators[0];
+        if (actuator?.pulse) {
+          const res = actuator.pulse(Math.max(strong, weak), dur);
+          if (res && typeof res.catch === 'function') {
+            res.catch(() => {});
+          }
+        }
+      }
+    } catch {
+      // Ignore browsers/controllers that restrict haptic actuators
+    }
+  }
+
+  public stopRumble(): void {
+    this.rumbleUntilMs = 0;
+    this.rumblePriority = 0;
+    const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+    const pad = pads
+      ? (Array.from(pads).find((p) => p && p.connected) as GamepadWithHaptics | undefined)
+      : undefined;
+    if (!pad) return;
+    try {
+      if (pad.vibrationActuator?.reset) {
+        const res = pad.vibrationActuator.reset();
+        if (res && typeof res.catch === 'function') res.catch(() => {});
+      }
+    } catch {
+      // Ignore
+    }
   }
 
   public exitPointerLock(): void {
@@ -182,6 +297,7 @@ export class InputManager {
   }
 
   public clearPending(): void {
+    this.stopRumble();
     this.pendingLight = false;
     this.pendingHeavy = false;
     this.pendingParry = false;
@@ -189,7 +305,10 @@ export class InputManager {
     this.pendingJump = false;
     this.pendingBow = false;
     this.pendingTimeSlow = false;
+    this.pendingHeal = false;
     this.pendingLockOn = false;
+    this.pendingCycleTarget = false;
+    this.pendingDaimoku = false;
     this.pendingPause = false;
     this.accumCamX = 0;
     this.accumCamY = 0;
@@ -233,8 +352,16 @@ export class InputManager {
     let jumpPressed = this.pendingJump;
     let bowPressed = this.pendingBow;
     let timeSlowPressed = this.pendingTimeSlow;
+    let healPressed = this.pendingHeal;
     let lockOnPressed = this.pendingLockOn;
+    let cycleTargetPressed = this.pendingCycleTarget;
+    let cycleTargetDir: -1 | 0 | 1 = cycleTargetPressed ? 1 : 0;
+    let daimokuPressed = this.pendingDaimoku;
     let pausePressed = this.pendingPause;
+
+    if (this.rightStickCooldown > 0) {
+      this.rightStickCooldown = Math.max(0, this.rightStickCooldown - dt);
+    }
 
     this.pendingLight = false;
     this.pendingHeavy = false;
@@ -243,7 +370,10 @@ export class InputManager {
     this.pendingJump = false;
     this.pendingBow = false;
     this.pendingTimeSlow = false;
+    this.pendingHeal = false;
     this.pendingLockOn = false;
+    this.pendingCycleTarget = false;
+    this.pendingDaimoku = false;
     this.pendingPause = false;
 
     // Poll HTML5 Gamepad API
@@ -281,16 +411,31 @@ export class InputManager {
       // LB / L1 (4) or LT (6) -> Block / Parry
       // RB / R1 (5) or R3 (11) -> Lock-On
       // D-Pad Up (12) or L3 (10) -> Time Slow (Cronostasi)
+      // D-Pad Down (13) -> Full Heal (Cura Totale)
+      // D-Pad Left (14) -> Cycle Lock-On Target
       // D-Pad Right (15) -> Bow Shot (Arco)
       // Start (9) -> Pause
+      const rawRx = pad.axes[2] ?? 0;
       if (this.isGameplayActive) {
+        if (Math.abs(rawRx) < 0.25) {
+          this.rightStickCooldown = Math.min(this.rightStickCooldown, 0.05);
+        } else if (Math.abs(rawRx) > 0.62 && this.rightStickCooldown <= 0) {
+          cycleTargetDir = rawRx > 0 ? 1 : -1;
+          this.rightStickCooldown = 0.28;
+        }
         if (just(0)) jumpPressed = true;
         if (just(1)) dodgePressed = true;
         if (just(2) || just(7)) lightAttackPressed = true;
         if (just(3)) heavyAttackPressed = true;
         if (just(5) || just(11)) lockOnPressed = true;
         if (just(12) || just(10)) timeSlowPressed = true;
+        if (just(13)) healPressed = true;
+        if (just(14)) {
+          cycleTargetPressed = true;
+          if (cycleTargetDir === 0) cycleTargetDir = -1;
+        }
         if (just(15)) bowPressed = true;
+        if (just(8)) daimokuPressed = true;
       }
       if (just(9)) pausePressed = true;
 
@@ -332,7 +477,11 @@ export class InputManager {
       jumpPressed,
       bowPressed,
       timeSlowPressed,
+      healPressed,
       lockOnPressed,
+      cycleTargetPressed,
+      cycleTargetDir,
+      daimokuPressed,
       pausePressed,
       gamepadConnected,
       gamepadName,

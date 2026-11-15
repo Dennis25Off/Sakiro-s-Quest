@@ -21,6 +21,7 @@ export const OutcomeOverlay: React.FC<OutcomeOverlayProps> = ({
   onExitToMenu,
 }) => {
   const isFifthAct = levelIndex === 4;
+  const isSixthAct = levelIndex === 5;
   const isFinalAct = levelIndex >= LEVELS.length - 1;
   const spec = LEVELS[levelIndex];
   const isDefeat = kind === 'defeat';
@@ -60,7 +61,11 @@ export const OutcomeOverlay: React.FC<OutcomeOverlayProps> = ({
           animate={{ scaleX: 1 }}
           transition={{ duration: 0.48, delay: isDefeat ? 0.38 : 0.2, ease: 'easeOut' }}
           className={`h-1 w-full origin-left ${
-            isDefeat ? 'bg-[#E12D39]' : isFifthAct || isFinalAct ? 'bg-[#F59E0B]' : 'bg-[#0284C7]'
+            isDefeat
+              ? 'bg-[#E12D39]'
+              : isFifthAct || isSixthAct || isFinalAct
+                ? 'bg-[#F59E0B]'
+                : 'bg-[#0284C7]'
           }`}
         />
 
@@ -74,7 +79,8 @@ export const OutcomeOverlay: React.FC<OutcomeOverlayProps> = ({
                 Sei caduto in duello
               </h2>
               <p className="text-sm text-[#4A5568] mt-3 leading-relaxed">
-                Il salvataggio automatico ti riporterà all&apos;ultimo santuario attivato: <strong className="text-[#12161F]">{checkpointName}</strong>.
+                Il salvataggio automatico ti riporterà all&apos;ultimo santuario attivato:{' '}
+                <strong className="text-[#12161F]">{checkpointName}</strong>.
               </p>
               <div className="flex flex-col gap-2.5 mt-7">
                 <button
@@ -104,15 +110,19 @@ export const OutcomeOverlay: React.FC<OutcomeOverlayProps> = ({
                 {isFinalAct
                   ? 'Vendetta Compiuta'
                   : isFifthAct
-                    ? 'Cronostasi e Arco Sbloccati'
-                    : `${spec.title} Liberato`}
+                    ? 'Porta Infernale Aperta'
+                    : isSixthAct
+                      ? 'Arco di Sakiro Sbloccato'
+                      : `${spec.title} Liberato`}
               </h2>
               <p className="text-sm text-[#4A5568] mt-3 leading-relaxed">
                 {isFinalAct
                   ? 'Sakiro ha abbattuto Shogun Kurogane e tutti i responsabili. La sua famiglia è finalmente vendicata.'
                   : isFifthAct
-                    ? 'Lord Tenmei è caduto! Hai sbloccato la Cronostasi ([T] / [↑ D-Pad]: rallenta il tempo per 4s, ricarica 30s) e l\'Arco di Sakiro ([G] / [→ D-Pad]: 2 frecce dritte in 10s). La marcia continua nell\'Atto 06.'
-                    : 'Il comandante nemico è caduto. Il progresso è stato salvato automaticamente per il prossimo atto.'}
+                    ? 'Lord Tenmei è caduto e la Porta Infernale si è schiusa davanti a te! Hai sbloccato la Cronostasi ([T] / [↑ D-Pad]: rallenta il tempo per 3.5s, ricarica 30s). Varcando la soglia entrerai nell\'Atto 06.'
+                    : isSixthAct
+                      ? 'Hai domato l\'Abisso dell\'Eclissi! Hai ottenuto l\'Arco di Sakiro ([G] / [→ D-Pad]: 5 frecce dritte in 10s). La vendetta prosegue nell\'Atto 07.'
+                      : 'Il comandante nemico è caduto. Il progresso è stato salvato automaticamente per il prossimo atto.'}
               </p>
               <div className="flex flex-col gap-2.5 mt-7">
                 {!isFinalAct ? (
@@ -121,7 +131,7 @@ export const OutcomeOverlay: React.FC<OutcomeOverlayProps> = ({
                     data-gp-item
                     onClick={onNextLevel}
                     className={`w-full py-3 px-4 text-white text-sm font-semibold transition-colors cursor-pointer ${
-                      isFifthAct
+                      isFifthAct || isSixthAct
                         ? 'bg-[#E12D39] hover:bg-[#12161F]'
                         : 'bg-[#12161F] hover:bg-[#0284C7]'
                     }`}
