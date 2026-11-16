@@ -18,6 +18,7 @@ interface PauseOverlayProps {
   combosUnlocked: boolean;
   discoveredCombos: SecretComboId[];
   gamepadConnected: boolean;
+  isFullscreen: boolean;
   onResume: () => void;
   onReloadCheckpoint: () => void;
   onExitToMenu: () => void;
@@ -26,6 +27,7 @@ interface PauseOverlayProps {
   onToggleMute: () => void;
   onToggleBinaural: () => void;
   onToggleControlsGuide: () => void;
+  onToggleFullscreen: () => void;
 }
 
 export const PauseOverlay: React.FC<PauseOverlayProps> = ({
@@ -39,6 +41,7 @@ export const PauseOverlay: React.FC<PauseOverlayProps> = ({
   combosUnlocked,
   discoveredCombos,
   gamepadConnected,
+  isFullscreen,
   onResume,
   onReloadCheckpoint,
   onExitToMenu,
@@ -47,6 +50,7 @@ export const PauseOverlay: React.FC<PauseOverlayProps> = ({
   onToggleMute,
   onToggleBinaural,
   onToggleControlsGuide,
+  onToggleFullscreen,
 }) => {
   const [section, setSection] = useState<'main' | 'settings'>('main');
   const [settingsSubtab, setSettingsSubtab] = useState<PauseSettingsSubtab>('video');
@@ -220,6 +224,7 @@ export const PauseOverlay: React.FC<PauseOverlayProps> = ({
                               id,
                               videoSettings.fov,
                               videoSettings.cameraShake,
+                              videoSettings.hudScale,
                             ),
                           )
                         }
@@ -347,6 +352,49 @@ export const PauseOverlay: React.FC<PauseOverlayProps> = ({
                       </button>
                     ))}
                   </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 py-1.5 border-b border-[#E2E8F0]">
+                  <span className="font-semibold text-[#12161F]">
+                    Dimensione HUD
+                  </span>
+                  <div className="flex items-center gap-2.5">
+                    <span className="font-mono-nums font-bold text-[#12161F] w-10 text-right">
+                      {Math.round(videoSettings.hudScale * 100)}%
+                    </span>
+                    <input
+                      type="range"
+                      data-gp-item
+                      min={0.75}
+                      max={1.25}
+                      step={0.05}
+                      value={videoSettings.hudScale}
+                      onChange={(e) =>
+                        onChangeVideo({
+                          ...videoSettings,
+                          hudScale: Number(e.target.value),
+                        })
+                      }
+                      className="w-32 accent-[#12161F] cursor-pointer"
+                      aria-label="Dimensione HUD"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between py-1.5 border-b border-[#E2E8F0]">
+                  <span className="font-semibold text-[#12161F]">Schermo Intero</span>
+                  <button
+                    type="button"
+                    data-gp-item
+                    onClick={onToggleFullscreen}
+                    className={`px-3 py-1 border font-semibold cursor-pointer ${
+                      isFullscreen
+                        ? 'bg-[#12161F] text-white border-[#12161F]'
+                        : 'bg-white text-[#4A5568] border-[#CBD5E1]'
+                    }`}
+                  >
+                    {isFullscreen ? 'Attivo' : 'Finestra'}
+                  </button>
                 </div>
 
                 <div className="flex items-center justify-between py-1.5 border-b border-[#E2E8F0]">

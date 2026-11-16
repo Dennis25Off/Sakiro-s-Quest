@@ -79,6 +79,8 @@ const INITIAL_HUD: HudSnapshot = {
   damageFlash: 0,
   lastDamageAmount: 0,
   damageSide: 'none',
+  enemyStasisActive: false,
+  enemyStasisRemaining: 0,
 };
 
 export default function App() {
@@ -107,6 +109,9 @@ export default function App() {
   });
   const [introPlaying, setIntroPlaying] = useState(false);
   const [storyIntroActive, setStoryIntroActive] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(() =>
+    typeof document !== 'undefined' ? Boolean(document.fullscreenElement) : false,
+  );
   const [transitionVeil, setTransitionVeil] = useState<{
     active: boolean;
     code?: string;
@@ -217,11 +222,11 @@ export default function App() {
     engine.loadLevel(saveRef.current.levelIndex, saveRef.current.checkpointIndex, true);
     engine.setScreenMode('menu');
 
-    // Setup Start Menu Intro music from attached asset
+    // Setup background music track from attached asset (menu + all non-boss acts)
     const intro = new Audio('/assets/aistudio/Project_46_cd633279.mp3');
     intro.loop = true;
     intro.preload = 'auto';
-    intro.volume = initAudio.volume * 0.65;
+    intro.volume = initAudio.volume * 0.34;
     intro.muted = initAudio.muted;
     intro.addEventListener('play', () => setIntroPlaying(true));
     intro.addEventListener('pause', () => setIntroPlaying(false));
@@ -263,22 +268,43 @@ export default function App() {
     };
   }, [updateSave]);
 
-  // Sync Intro audio playback with menu screen and audio settings
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+    };
+  }, []);
+
+  // Sync attached track playback with menu and non-boss gameplay acts (lowered volume in levels)
   useEffect(() => {
     const intro = introAudioRef.current;
     if (!intro) return;
-    intro.volume = audioVolume * 0.65;
+
+    const isBossLevel = hud.levelIndex === 5 || hud.levelIndex === 9;
+    const isMenuMusic = screen === 'menu';
+    const isNonBossGameplay = screen === 'playing' && !isBossLevel;
+    const isPausedNonBoss = (screen === 'paused' || screen === 'daimoku') && !isBossLevel;
+
+    intro.volume = audioVolume * (isMenuMusic ? 0.34 : 0.2);
     intro.muted = audioMuted;
 
-    if (screen !== 'menu') {
+    if (!isMenuMusic && !isNonBossGameplay) {
       intro.pause();
-      intro.currentTime = 0;
+      if (!isPausedNonBoss) {
+        intro.currentTime = 0;
+      }
       return;
     }
 
     let cancelled = false;
+    const shouldPlay = () =>
+      !cancelled && (screen === 'menu' || (screen === 'playing' && !isBossLevel));
+
     const tryPlay = () => {
-      if (cancelled || screen !== 'menu') return;
+      if (!shouldPlay()) return;
       const p = intro.play();
       if (p && typeof p.catch === 'function') {
         p.catch(() => {
@@ -290,7 +316,7 @@ export default function App() {
     tryPlay();
 
     const onGesture = () => {
-      if (!cancelled && screen === 'menu' && intro.paused) {
+      if (shouldPlay() && intro.paused) {
         tryPlay();
       }
     };
@@ -302,7 +328,7 @@ export default function App() {
       window.removeEventListener('pointerdown', onGesture);
       window.removeEventListener('keydown', onGesture);
     };
-  }, [screen, audioVolume, audioMuted]);
+  }, [screen, hud.levelIndex, audioVolume, audioMuted]);
 
   // Sync Boss Fight music (Atto 06 / index 5 & Atto 10 / index 9) with gameplay & pause state
   useEffect(() => {
@@ -526,6 +552,22 @@ export default function App() {
     });
   }, []);
 
+  const handleToggleFullscreen = useCallback(() => {
+    if (typeof document === 'undefined') return;
+    if (!document.fullscreenElement) {
+      const target = document.documentElement;
+      if (target.requestFullscreen) {
+        target.requestFullscreen().catch(() => {
+          // Ignore fullscreen rejection in restricted iframes
+        });
+      }
+    } else if (document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {
+        // Ignore exit fullscreen error
+      });
+    }
+  }, []);
+
   const handleChangeAudio = (opts: { volume?: number; muted?: boolean; binaural?: boolean }) => {
     unlockAudio();
     const eng = engineRef.current;
@@ -680,6 +722,7 @@ export default function App() {
               binauralEnabled={binauralEnabled}
               showControlsGuide={showControlsGuide}
               introPlaying={introPlaying}
+              isFullscreen={isFullscreen}
               onContinue={handleContinue}
               onNewGame={handleNewGame}
               onReplayIntro={handleReplayIntro}
@@ -687,6 +730,7 @@ export default function App() {
               onChangeVideo={handleChangeVideo}
               onChangeAudio={handleChangeAudio}
               onToggleControlsGuide={handleToggleControlsGuide}
+              onToggleFullscreen={handleToggleFullscreen}
               onPreviewLevel={handlePreviewLevel}
             />
           </motion.div>
@@ -710,8 +754,11 @@ export default function App() {
             ) : (
               <GameHud
                 hud={hud}
+                hudScale={videoSettings.hudScale}
+                isFullscreen={isFullscreen}
                 showControlsGuide={showControlsGuide}
                 onToggleControlsGuide={handleToggleControlsGuide}
+                onToggleFullscreen={handleToggleFullscreen}
                 onOpenDaimoku={handleOpenDaimoku}
                 onPause={handlePause}
               />
@@ -744,6 +791,7 @@ export default function App() {
             combosUnlocked={save.unlockedLevel >= 1 || hud.levelIndex >= 1}
             discoveredCombos={save.discoveredCombos}
             gamepadConnected={hud.gamepadConnected}
+            isFullscreen={isFullscreen}
             onResume={handleResume}
             onReloadCheckpoint={handleReloadCheckpoint}
             onExitToMenu={handleExitToMenu}
@@ -752,6 +800,7 @@ export default function App() {
             onToggleMute={() => handleChangeAudio({ muted: !audioMuted })}
             onToggleBinaural={() => handleChangeAudio({ binaural: !binauralEnabled })}
             onToggleControlsGuide={handleToggleControlsGuide}
+            onToggleFullscreen={handleToggleFullscreen}
           />
         )}
 

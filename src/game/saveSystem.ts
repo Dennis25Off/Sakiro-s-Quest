@@ -26,6 +26,7 @@ const VALID_COMBOS: SecretComboId[] = [
 export const DEFAULT_VIDEO_SETTINGS: VideoSettings = {
   qualityPreset: 'auto',
   fov: 54,
+  hudScale: 1,
   shadowQuality: 'standard',
   renderScale: 'native',
   effectsDensity: 'normal',
@@ -114,11 +115,14 @@ export function videoSettingsForPreset(
   preset: QualityPreset,
   currentFov = 54,
   cameraShake = true,
+  currentHudScale = 1,
 ): VideoSettings {
+  const hudScale = Math.max(0.75, Math.min(1.25, Number(currentHudScale.toFixed(2))));
   if (preset === 'low') {
     return {
       qualityPreset: 'low',
       fov: currentFov,
+      hudScale,
       shadowQuality: 'off',
       renderScale: 'low',
       effectsDensity: 'low',
@@ -129,6 +133,7 @@ export function videoSettingsForPreset(
     return {
       qualityPreset: 'balanced',
       fov: currentFov,
+      hudScale,
       shadowQuality: 'standard',
       renderScale: 'native',
       effectsDensity: 'normal',
@@ -139,6 +144,7 @@ export function videoSettingsForPreset(
     return {
       qualityPreset: 'high',
       fov: currentFov,
+      hudScale,
       shadowQuality: 'ultra',
       renderScale: 'ultra',
       effectsDensity: 'high',
@@ -148,6 +154,7 @@ export function videoSettingsForPreset(
   return {
     qualityPreset: 'auto',
     fov: currentFov,
+    hudScale,
     shadowQuality: 'standard',
     renderScale: 'native',
     effectsDensity: 'normal',
@@ -168,6 +175,10 @@ export function loadVideoSettings(): VideoSettings {
         ? parsed.qualityPreset
         : 'auto';
     const fov = Math.max(46, Math.min(78, Math.round(Number(parsed.fov ?? 54))));
+    const rawScale = Number(parsed.hudScale ?? 1);
+    const hudScale = Number.isFinite(rawScale)
+      ? Math.max(0.75, Math.min(1.25, Math.round(rawScale * 20) / 20))
+      : 1;
     const shadowQuality =
       parsed.shadowQuality === 'off' ||
       parsed.shadowQuality === 'standard' ||
@@ -190,6 +201,7 @@ export function loadVideoSettings(): VideoSettings {
     return {
       qualityPreset: preset,
       fov,
+      hudScale,
       shadowQuality,
       renderScale,
       effectsDensity,
@@ -204,6 +216,7 @@ export function persistVideoSettings(settings: VideoSettings): VideoSettings {
   const clean: VideoSettings = {
     ...settings,
     fov: Math.max(46, Math.min(78, Math.round(settings.fov))),
+    hudScale: Math.max(0.75, Math.min(1.25, Math.round((settings.hudScale ?? 1) * 20) / 20)),
   };
   try {
     window.localStorage.setItem(VIDEO_SETTINGS_KEY, JSON.stringify(clean));

@@ -723,7 +723,7 @@ export const LEVELS: LevelSpec[] = [
         triggerZ: 2,
         arenaCenter: [0, 0, -26],
         arenaRadius: 24,
-        storyLine: 'Kagetsu tende l\'arco tra le rovine in fiamme: «Premi [T] per attivare la Cronostasi (3.5s) e spezza la sua raffica!»',
+        storyLine: 'Kagetsu tende l\'arco tra le rovine in fiamme: «Anche io piego il tempo, Sakiro!» — Premi [T] per spezzare la sua Stasi.',
         enemies: [
           {
             id: 'l6_b1',
@@ -739,6 +739,7 @@ export const LEVELS: LevelSpec[] = [
             isMagicBoss: true,
             canBow: true,
             canBombs: true,
+            canStasis: true,
             phases: 2,
           },
         ],

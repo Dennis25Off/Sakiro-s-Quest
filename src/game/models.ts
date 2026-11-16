@@ -960,3 +960,141 @@ export function createInfernalPortalGate(mats: GameMaterialLibrary): InfernalPor
     portalLight,
   };
 }
+
+export interface DaimokuCrateObj {
+  group: THREE.Group;
+  orbCrest: THREE.Mesh;
+  haloRing: THREE.Mesh;
+}
+
+export function createDaimokuCrate(mats: GameMaterialLibrary): DaimokuCrateObj {
+  const group = new THREE.Group();
+
+  const woodDarkMat = new THREE.MeshStandardMaterial({
+    color: 0x4b2e1c,
+    roughness: 0.78,
+    metalness: 0.08,
+  });
+  const woodLightMat = new THREE.MeshStandardMaterial({
+    color: 0x71472c,
+    roughness: 0.72,
+    metalness: 0.06,
+  });
+  const ironBandMat = new THREE.MeshStandardMaterial({
+    color: 0x262d3a,
+    roughness: 0.36,
+    metalness: 0.84,
+  });
+  const brassMat = mats.enemyGoldTrim;
+
+  // Inner dark plank core
+  const coreBox = new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.92, 0.96), woodDarkMat);
+  coreBox.position.y = 0.48;
+  coreBox.castShadow = true;
+  coreBox.receiveShadow = true;
+  group.add(coreBox);
+
+  // Horizontal chamfered wood planks around all 4 sides
+  const plankGeoX = new THREE.BoxGeometry(1.02, 0.21, 0.99);
+  const plankGeoZ = new THREE.BoxGeometry(0.99, 0.21, 1.02);
+  [0.2, 0.48, 0.76].forEach((py, idx) => {
+    const mat = idx === 1 ? woodLightMat : woodDarkMat;
+    const px = new THREE.Mesh(plankGeoX, mat);
+    px.position.y = py;
+    px.castShadow = true;
+    px.receiveShadow = true;
+    const pz = new THREE.Mesh(plankGeoZ, mat);
+    pz.position.y = py;
+    pz.castShadow = true;
+    pz.receiveShadow = true;
+    group.add(px, pz);
+  });
+
+  // Heavy forged corner posts + bottom plinth + top lid frame
+  const postGeo = new THREE.BoxGeometry(0.13, 1.0, 0.13);
+  const studGeo = new THREE.BoxGeometry(0.055, 0.055, 0.055);
+  [-0.47, 0.47].forEach((cx) => {
+    [-0.47, 0.47].forEach((cz) => {
+      const post = new THREE.Mesh(postGeo, ironBandMat);
+      post.position.set(cx, 0.5, cz);
+      post.castShadow = true;
+      group.add(post);
+
+      [0.14, 0.5, 0.86].forEach((sy) => {
+        const stud = new THREE.Mesh(studGeo, brassMat);
+        stud.position.set(cx * 1.05, sy, cz * 1.05);
+        group.add(stud);
+      });
+    });
+  });
+
+  const bandFrameGeo = new THREE.BoxGeometry(1.06, 0.1, 1.06);
+  const bottomBand = new THREE.Mesh(bandFrameGeo, ironBandMat);
+  bottomBand.position.y = 0.05;
+  bottomBand.receiveShadow = true;
+  const topBand = new THREE.Mesh(bandFrameGeo, ironBandMat);
+  topBand.position.y = 0.95;
+  topBand.castShadow = true;
+  group.add(bottomBand, topBand);
+
+  // Diagonal timber & iron cross-braces on front/back and left/right faces
+  const braceGeo = new THREE.BoxGeometry(0.92, 0.085, 0.06);
+  [-0.505, 0.505].forEach((zFace) => {
+    const b1 = new THREE.Mesh(braceGeo, woodLightMat);
+    b1.position.set(0, 0.49, zFace);
+    b1.rotation.z = 0.72;
+    const b2 = new THREE.Mesh(braceGeo, ironBandMat);
+    b2.position.set(0, 0.49, zFace * 1.015);
+    b2.rotation.z = -0.72;
+    group.add(b1, b2);
+  });
+
+  const braceSideGeo = new THREE.BoxGeometry(0.06, 0.085, 0.92);
+  [-0.505, 0.505].forEach((xFace) => {
+    const b1 = new THREE.Mesh(braceSideGeo, woodLightMat);
+    b1.position.set(xFace, 0.49, 0);
+    b1.rotation.x = 0.72;
+    const b2 = new THREE.Mesh(braceSideGeo, ironBandMat);
+    b2.position.set(xFace * 1.015, 0.49, 0);
+    b2.rotation.x = -0.72;
+    group.add(b1, b2);
+  });
+
+  // Top lid planks + brass ritual seal plate + front clasp
+  const lid = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.08, 0.92), woodLightMat);
+  lid.position.y = 0.99;
+  lid.castShadow = true;
+  lid.receiveShadow = true;
+  group.add(lid);
+
+  const sealPlate = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.34, 0.06, 8), ironBandMat);
+  sealPlate.position.y = 1.04;
+  group.add(sealPlate);
+
+  const clasp = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.2, 0.08), brassMat);
+  clasp.position.set(0, 0.88, 0.53);
+  group.add(clasp);
+
+  // Glowing Pure-White Daimoku Spirit Crest hovering above the crate
+  const crestMat = new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+  });
+  const orbCrest = new THREE.Mesh(new THREE.OctahedronGeometry(0.16, 1), crestMat);
+  orbCrest.position.y = 1.32;
+  group.add(orbCrest);
+
+  const haloMat = new THREE.MeshBasicMaterial({
+    color: 0xf8fafc,
+    transparent: true,
+    opacity: 0.78,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const haloRing = new THREE.Mesh(new THREE.TorusGeometry(0.26, 0.024, 6, 20), haloMat);
+  haloRing.position.y = 1.32;
+  haloRing.rotation.x = Math.PI / 2.2;
+  group.add(haloRing);
+
+  return { group, orbCrest, haloRing };
+}
+

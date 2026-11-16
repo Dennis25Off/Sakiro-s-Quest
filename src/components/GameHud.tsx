@@ -1,19 +1,25 @@
 import React, { useEffect, useState } from 'react';
-import { EyeOff, Flame, Pause } from 'lucide-react';
+import { EyeOff, Maximize2, Minimize2, Pause } from 'lucide-react';
 import { HudSnapshot } from '../game/types';
 
 interface GameHudProps {
   hud: HudSnapshot;
+  hudScale: number;
+  isFullscreen: boolean;
   showControlsGuide: boolean;
   onToggleControlsGuide: () => void;
+  onToggleFullscreen: () => void;
   onOpenDaimoku: () => void;
   onPause: () => void;
 }
 
 export const GameHud: React.FC<GameHudProps> = ({
   hud,
+  hudScale,
+  isFullscreen,
   showControlsGuide,
   onToggleControlsGuide,
+  onToggleFullscreen,
   onOpenDaimoku,
   onPause,
 }) => {
@@ -151,6 +157,19 @@ export const GameHud: React.FC<GameHudProps> = ({
         />
       )}
 
+      {/* Boss Enemy Stasis Curse Violet Vignette */}
+      {hud.enemyStasisActive && (
+        <div
+          className="fixed inset-0 pointer-events-none z-[9]"
+          style={{
+            background:
+              'radial-gradient(ellipse at center, rgba(168, 85, 247, 0) 52%, rgba(126, 34, 206, 0.28) 88%, rgba(168, 85, 247, 0.46) 100%)',
+            boxShadow: 'inset 0 0 110px rgba(168, 85, 247, 0.56)',
+            border: '2px solid rgba(192, 132, 252, 0.45)',
+          }}
+        />
+      )}
+
       {/* Floating 3D-projected Combat Pop-Ups (transparent, non-blocking damage & hit indicators) */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-20">
         {hud.popups.map((p) => {
@@ -196,8 +215,9 @@ export const GameHud: React.FC<GameHudProps> = ({
           className="fixed inset-x-0 top-[24%] z-20 flex justify-center pointer-events-none px-4"
         >
           <p
-            className="bg-transparent border-0 font-display text-lg sm:text-2xl font-extrabold tracking-[0.22em] text-white opacity-75 uppercase text-center select-none"
+            className="bg-transparent border-0 font-display text-lg sm:text-2xl font-extrabold tracking-[0.22em] text-white opacity-75 uppercase text-center select-none origin-center"
             style={{
+              transform: `scale(${hudScale})`,
               textShadow:
                 hud.feedback.kind === 'checkpoint'
                   ? '0 2px 14px rgba(0, 0, 0, 0.88), 0 0 18px rgba(16, 185, 129, 0.6)'
@@ -211,7 +231,10 @@ export const GameHud: React.FC<GameHudProps> = ({
 
       {/* TOP BAR: Grid locks Checkpoint & Enemy/Boss bar strictly in the horizontal center */}
       <div className="relative grid grid-cols-[1fr_auto_1fr] items-start gap-3 sm:gap-4 w-full">
-        <div className="justify-self-start flex flex-col items-start gap-2 min-w-0">
+        <div
+          className="justify-self-start flex flex-col items-start gap-2 min-w-0 origin-top-left"
+          style={{ transform: `scale(${hudScale})` }}
+        >
           <div className="text-xs text-[#1E293B]">
             <p className="font-display font-semibold tracking-wider text-[#12161F] truncate">
               {hud.levelTitle}
@@ -244,7 +267,10 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
 
         {/* Top-Center: Arti-Style Transparent Checkpoint Label + Centered Enemy / Boss Health Bar */}
-        <div className="justify-self-center flex flex-col items-center gap-2 w-[250px] sm:w-[410px] lg:w-[470px]">
+        <div
+          className="justify-self-center flex flex-col items-center gap-2 w-[250px] sm:w-[410px] lg:w-[470px] origin-top"
+          style={{ transform: `scale(${hudScale})` }}
+        >
           <p
             className="bg-transparent border-0 font-display text-[11px] sm:text-xs font-extrabold tracking-[0.22em] text-white opacity-75 uppercase text-center select-none whitespace-nowrap"
             style={{
@@ -254,6 +280,17 @@ export const GameHud: React.FC<GameHudProps> = ({
           >
             {hud.checkpointName}
           </p>
+
+          {hud.enemyStasisActive && (
+            <div className="px-3 py-1 bg-[#1E1033]/92 border border-[#C084FC] text-[11px] font-display font-bold tracking-wider text-[#E9D5FF] uppercase">
+              Stasi Subita · {(hud.enemyStasisRemaining ?? 0).toFixed(1)}s
+              {hud.timeSlowUnlocked && hud.timeSlowCooldown <= 0
+                ? hud.gamepadConnected
+                  ? ' · ↑ Spezza'
+                  : ' · [T] Spezza'
+                : ''}
+            </div>
+          )}
 
           {enemy && (
             <div
@@ -298,6 +335,11 @@ export const GameHud: React.FC<GameHudProps> = ({
                 {enemy.telegraph === 'bomb' && (
                   <span className="text-[11px] font-bold tracking-wider text-[#FB923C] whitespace-nowrap shrink-0">
                     BOMBE · SCAPPA
+                  </span>
+                )}
+                {enemy.telegraph === 'stasis' && (
+                  <span className="text-[11px] font-bold tracking-wider text-[#C084FC] whitespace-nowrap shrink-0">
+                    STASI TEMPORALE
                   </span>
                 )}
                 {enemy.staggered && (
@@ -409,15 +451,26 @@ export const GameHud: React.FC<GameHudProps> = ({
           )}
         </div>
 
-        <div className="justify-self-end flex items-center gap-2 sm:gap-3 pointer-events-auto">
+        <div
+          className="justify-self-end flex items-center gap-2 sm:gap-2.5 pointer-events-auto origin-top-right"
+          style={{ transform: `scale(${hudScale})` }}
+        >
           <button
             type="button"
             onClick={onOpenDaimoku}
             aria-label="Apri menu potenziamento Daimoku"
-            className="px-3 py-1.5 bg-[#0B101B]/90 border border-[#334155] text-white hover:border-[#38BDF8] transition-colors cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0"
+            className="px-3 py-1.5 bg-[#0B101B]/90 border border-[#334155] text-white hover:border-white transition-colors cursor-pointer flex items-center gap-2 whitespace-nowrap shrink-0"
           >
-            <Flame className="w-3.5 h-3.5 text-[#FBBF24]" />
-            <span className="font-mono-nums text-xs font-bold text-[#38BDF8]">
+            <span
+              aria-hidden="true"
+              className="inline-block w-2.5 h-2.5 shrink-0"
+              style={{
+                borderRadius: '9999px',
+                background: '#FFFFFF',
+                boxShadow: '0 0 8px rgba(255, 255, 255, 0.85)',
+              }}
+            />
+            <span className="font-mono-nums text-xs font-bold text-white">
               {hud.energyOrbs}
             </span>
             <span className="text-[10px] font-display font-bold tracking-wider text-slate-200 uppercase">
@@ -427,6 +480,19 @@ export const GameHud: React.FC<GameHudProps> = ({
           <span className="font-mono-nums text-[11px] text-[#475569] hidden sm:inline">
             {hud.fpsEstimate} FPS
           </span>
+          <button
+            type="button"
+            onClick={onToggleFullscreen}
+            aria-label={isFullscreen ? 'Esci da Schermo Intero' : 'Attiva Schermo Intero'}
+            title={isFullscreen ? 'Esci da Schermo Intero' : 'Schermo Intero'}
+            className="p-2 bg-[#F8FAFC]/90 border border-[#CBD5E1] text-[#12161F] hover:border-[#12161F] transition-colors cursor-pointer"
+          >
+            {isFullscreen ? (
+              <Minimize2 className="w-4 h-4" />
+            ) : (
+              <Maximize2 className="w-4 h-4" />
+            )}
+          </button>
           <button
             type="button"
             onClick={onPause}
@@ -441,7 +507,10 @@ export const GameHud: React.FC<GameHudProps> = ({
       {/* BOTTOM ROW: Sculpted Katana HUD Left, Story Subtitles Bottom-Center, Controls Right */}
       <div className="relative flex items-end justify-between gap-4 lg:gap-6">
         {/* KATANA HUD (Bottom-Left): Vita nella lama, Postura & Energia nel fodero, Arco/Cronostasi/Arti sull'elsa */}
-        <div className="flex flex-col gap-1.5 shrink-0 w-[300px] sm:w-[368px] select-none">
+        <div
+          className="flex flex-col gap-1.5 shrink-0 w-[300px] sm:w-[368px] select-none origin-bottom-left"
+          style={{ transform: `scale(${hudScale})` }}
+        >
           {/* Compact Tactical Modules docked seamlessly above the Katana spine */}
           <div className="flex flex-wrap items-center gap-1.5 pl-1">
             {hud.bowUnlocked && (
@@ -732,7 +801,10 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
 
         {/* Story Subtitles (Bottom-Center) */}
-        <div className="flex-1 flex items-end justify-center px-2">
+        <div
+          className="flex-1 flex items-end justify-center px-2 origin-bottom"
+          style={{ transform: `scale(${hudScale})` }}
+        >
           {hud.storySubtitle && (
             <p className="max-w-xl text-center text-xs sm:text-sm font-medium text-[#12161F] bg-[#F8FAFC]/90 border border-[#DCE3EC] px-4 py-2">
               {hud.storySubtitle}
@@ -741,7 +813,10 @@ export const GameHud: React.FC<GameHudProps> = ({
         </div>
 
         {/* Controls Guide (Bottom-Right — Completely Hideable from Settings or [H]) */}
-        <div className="hidden md:flex flex-col items-end gap-1.5 shrink-0 min-w-[200px]">
+        <div
+          className="hidden md:flex flex-col items-end gap-1.5 shrink-0 min-w-[200px] origin-bottom-right"
+          style={{ transform: `scale(${hudScale})` }}
+        >
           {(hud.isBlocking || hud.gamepadConnected) && (
             <div className="text-right text-[11px]">
               {hud.isBlocking ? (

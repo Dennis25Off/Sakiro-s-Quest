@@ -8,11 +8,13 @@ import {
   ArticulatedSamuraiRig,
   CheckpointBeaconObj,
   createCheckpointBeacon,
+  createDaimokuCrate,
   createEnemySamuraiRig,
   createHeroSamuraiRig,
   createInfernalPortalGate,
   createNeoToriiGate,
   createRuinedToriiGate,
+  DaimokuCrateObj,
   InfernalPortalGateObj,
 } from './models';
 import { createMaterialLibrary, GameMaterialLibrary } from './textures';
@@ -187,6 +189,16 @@ interface EnergyOrb {
   maxLife: number;
 }
 
+interface ActiveDaimokuCrate {
+  id: string;
+  crate: DaimokuCrateObj;
+  pos: THREE.Vector3;
+  radius: number;
+  orbsCount: number;
+  totalEnergy: number;
+  broken: boolean;
+}
+
 interface ParkourCollider {
   minX: number;
   maxX: number;
@@ -231,7 +243,8 @@ interface ActiveEnemy {
   magicCooldown: number;
   bowCooldown: number;
   bombCooldown: number;
-  magicKind: 'none' | 'bolts' | 'meteors' | 'bow' | 'bombs';
+  stasisCooldown: number;
+  magicKind: 'none' | 'bolts' | 'meteors' | 'bow' | 'bombs' | 'stasis';
   strafeDir: number;
   stepTimer: number;
   deadTimer: number;
@@ -331,6 +344,7 @@ export class SamuraiGameEngine {
   private timeSlowUnlocked = false;
   private timeSlowTimer = 0;
   private parrySlowTimer = 0;
+  private enemyStasisTimer = 0;
   private timeSlowCooldown = 0;
   private bowUnlocked = false;
   private readonly bowMaxCharges = 5;
@@ -403,6 +417,7 @@ export class SamuraiGameEngine {
   private heroArrows: HeroArrow[] = [];
   private bossBombs: BossBomb[] = [];
   private energyOrbs: EnergyOrb[] = [];
+  private crates: ActiveDaimokuCrate[] = [];
   private crossBladeGeo!: THREE.BoxGeometry;
   private crossCoreGeo!: THREE.BoxGeometry;
   private crescentGeo!: THREE.RingGeometry;
@@ -1007,6 +1022,7 @@ export class SamuraiGameEngine {
     this.postDodgeTimer = 0;
     this.timeSlowTimer = 0;
     this.parrySlowTimer = 0;
+    this.enemyStasisTimer = 0;
     this.timeSlowCooldown = 0;
     this.standingColliderIdx = -1;
     this.parkourClock = 0;
@@ -1130,6 +1146,11 @@ export class SamuraiGameEngine {
       orb.haloMat.dispose();
     }
     this.energyOrbs = [];
+    for (const c of this.crates) {
+      this.disposeCrateObject(c.crate);
+    }
+    this.crates = [];
+    this.enemyStasisTimer = 0;
     this.orbGainAccum = 0;
     this.orbGainPopupTimer = 0;
     for (const sw of this.shockwavePool) {
@@ -1213,9 +1234,11 @@ export class SamuraiGameEngine {
     // Main walkway + courtyard floor (split into two halves if mid-level Parkour chasm is present)
     const isInfernal = spec.themeStyle === 'eclipse_abyss' || spec.themeStyle === 'final_sanctum';
 
+    let generatedParkourPlatforms: ParkourPlatformSpec[] = [];
     if (spec.parkour) {
       const { gapZStart, gapZEnd } = spec.parkour;
       const platforms = this.generateRandomParkourPlatforms(spec.parkour, spec.widthX, spec.index);
+      generatedParkourPlatforms = platforms;
       this.parkourGap = { zMin: gapZEnd, zMax: gapZStart };
 
       const depthBefore = frontZ - gapZStart;
@@ -2019,6 +2042,47 @@ export class SamuraiGameEngine {
       this.petalData[i * 4 + 3] = Math.random() * Math.PI * 2;
     }
     this.levelGroup.add(this.petalInstanced);
+
+    // Spawn richly detailed breakable Daimoku Crates (with glowing white spirit energy inside)
+    const crateSpots: Array<{ x: number; y: number; z: number; energy: number; orbs: number }> = [];
+    if (isBossArenaOnly) {
+      crateSpots.push(
+        { x: -spec.widthX / 2 + 2.8, y: 0, z: -13.5, energy: 40 + spec.index * 5, orbs: 6 },
+        { x: spec.widthX / 2 - 2.8, y: 0, z: -31.0, energy: 45 + spec.index * 5, orbs: 7 },
+      );
+    } else {
+      const zMid = -Math.round(spec.lengthZ * 0.44);
+      const safeMidZ = inParkourGap(zMid, 2.4) ? -Math.round(spec.lengthZ * 0.68) : zMid;
+      crateSpots.push(
+        { x: -spec.widthX / 2 + 2.6, y: 0, z: -16.5, energy: 30 + spec.index * 4, orbs: 5 },
+        { x: spec.widthX / 2 - 2.6, y: 0, z: safeMidZ, energy: 34 + spec.index * 4, orbs: 6 },
+        { x: -spec.widthX / 2 + 2.8, y: 0, z: -spec.lengthZ + 22, energy: 38 + spec.index * 5, orbs: 6 },
+      );
+      // Place 1 high-reward Daimoku Crate directly on a stationary parkour foothold
+      const stationaryPlat =
+        generatedParkourPlatforms.find((p, idx) => idx >= 1 && !p.moveAxis) ??
+        generatedParkourPlatforms[0];
+      if (stationaryPlat) {
+        crateSpots.push({
+          x: stationaryPlat.x,
+          y: stationaryPlat.y,
+          z: stationaryPlat.z,
+          energy: 52 + spec.index * 6,
+          orbs: 8,
+        });
+      }
+    }
+
+    crateSpots.forEach((spot, idx) => {
+      this.spawnDaimokuCrateAt(
+        `crate_${spec.index}_${idx}`,
+        spot.x,
+        spot.y,
+        spot.z,
+        spot.energy,
+        spot.orbs,
+      );
+    });
   }
 
   private generateRandomParkourPlatforms(
@@ -2030,55 +2094,55 @@ export class SamuraiGameEngine {
     const gapEnd = parkour.gapZEnd;
     const span = gapStart - gapEnd; // 15.5..18.5m
     const tier = Math.min(4, Math.floor(levelIndex / 2)); // 0 in Act 1-2, up to 4 in Act 9
-    const maxSafeX = Math.max(3.6, widthX / 2 - 3.2);
+    const maxSafeX = Math.max(3.8, widthX / 2 - 3.0);
     const randRange = (min: number, max: number) => min + Math.random() * (max - min);
     const platforms: ParkourPlatformSpec[] = [];
 
-    // Harder platform dimensions that progressively narrow at higher acts
-    const sizeScale = Math.max(0.78, 1 - tier * 0.05);
-    const moveSpeedBase = 1.45 + tier * 0.2;
+    // Tighter, higher-precision footholds and brisker moving bridges across all acts
+    const sizeScale = Math.max(0.68, 0.88 - tier * 0.05);
+    const moveSpeedBase = 1.82 + tier * 0.24;
 
-    const archetype = Math.floor(Math.random() * 4);
+    const archetype = Math.floor(Math.random() * 5);
 
     if (archetype === 0) {
-      // Pattern 1: Narrow Zig-Zag Precision Gauntlet (5 steps across wide chasms, moving bridge in center)
-      const steps = span >= 16.0 ? 5 : 4;
-      const stepSpan = span / (steps + 0.35);
+      // Pattern 1: Narrow Zig-Zag Precision Gauntlet (5-6 tight steps with fast central slider)
+      const steps = span >= 16.0 ? 6 : 5;
+      const stepSpan = span / (steps + 0.3);
       let side = Math.random() < 0.5 ? -1 : 1;
       let prevX = 0;
       let prevY = 0;
 
       for (let i = 0; i < steps; i++) {
-        const t = (i + 0.72) / (steps + 0.35);
-        const z = gapStart - t * span + randRange(-0.14, 0.14);
-        const stepDx = side * randRange(1.4, 2.25);
+        const t = (i + 0.7) / (steps + 0.35);
+        const z = gapStart - t * span + randRange(-0.12, 0.12);
+        const stepDx = side * randRange(1.75, 2.55);
         const x =
           i === steps - 1
-            ? THREE.MathUtils.clamp(prevX * 0.45 + randRange(-1.0, 1.0), -maxSafeX, maxSafeX)
+            ? THREE.MathUtils.clamp(prevX * 0.45 + randRange(-1.1, 1.1), -maxSafeX, maxSafeX)
             : THREE.MathUtils.clamp(prevX + stepDx, -maxSafeX, maxSafeX);
-        const deltaY = i === 0 ? randRange(0.55, 0.8) : randRange(-0.38, 0.65);
-        const y = Number(THREE.MathUtils.clamp(prevY + deltaY, 0.5, 2.15).toFixed(2));
+        const deltaY = i === 0 ? randRange(0.55, 0.78) : randRange(-0.42, 0.68);
+        const y = Number(THREE.MathUtils.clamp(prevY + deltaY, 0.52, 2.3).toFixed(2));
         prevX = x;
         prevY = y;
         side *= -1;
 
-        const isMovingCenter = levelIndex >= 1 && i === Math.floor(steps / 2);
-        const isBridge = isMovingCenter || (i === steps - 2 && Math.random() < 0.45);
+        const isMovingCenter = i === Math.floor(steps / 2);
+        const isBridge = isMovingCenter || (i === steps - 2 && Math.random() < 0.5);
         platforms.push({
           x: Number((isMovingCenter ? 0 : x).toFixed(2)),
           y,
-          z: Number(Math.min(gapStart - 2.0, Math.max(gapEnd + 2.0, z)).toFixed(2)),
-          w: Number(((isBridge ? randRange(2.15, 2.5) : randRange(1.85, 2.3)) * sizeScale).toFixed(2)),
-          h: Number((isBridge ? 0.34 : randRange(0.55, 0.82)).toFixed(2)),
+          z: Number(Math.min(gapStart - 1.9, Math.max(gapEnd + 1.9, z)).toFixed(2)),
+          w: Number(((isBridge ? randRange(1.9, 2.2) : randRange(1.65, 2.05)) * sizeScale).toFixed(2)),
+          h: Number((isBridge ? 0.32 : randRange(0.55, 0.85)).toFixed(2)),
           d: Number(
             Math.min(
-              stepSpan * 0.86,
-              (isBridge ? randRange(2.55, 3.05) : randRange(2.0, 2.45)) * sizeScale,
+              stepSpan * 0.84,
+              (isBridge ? randRange(2.25, 2.65) : randRange(1.75, 2.15)) * sizeScale,
             ).toFixed(2),
           ),
           kind: isBridge ? 'bridge' : i % 2 === 0 ? 'stone' : 'pillar',
           moveAxis: isMovingCenter ? 'x' : undefined,
-          moveAmp: isMovingCenter ? Math.min(2.7, maxSafeX * 0.5) : undefined,
+          moveAmp: isMovingCenter ? Math.min(2.85, maxSafeX * 0.56) : undefined,
           moveSpeed: isMovingCenter ? moveSpeedBase : undefined,
           movePhase: isMovingCenter ? Math.random() * Math.PI * 2 : undefined,
         });
@@ -2092,173 +2156,231 @@ export class SamuraiGameEngine {
 
       platforms.push({
         x: Number(entryX.toFixed(2)),
-        y: 0.68,
+        y: 0.72,
         z: Number((gapStart - span * 0.14).toFixed(2)),
-        w: Number((2.25 * sizeScale).toFixed(2)),
+        w: Number((1.95 * sizeScale).toFixed(2)),
         h: 0.62,
-        d: Number((2.2 * sizeScale).toFixed(2)),
+        d: Number((1.95 * sizeScale).toFixed(2)),
         kind: 'stone',
       });
       platforms.push({
         x: 0,
-        y: 1.15,
-        z: Number((gapStart - span * 0.32).toFixed(2)),
-        w: Number((2.4 * sizeScale).toFixed(2)),
-        h: 0.34,
-        d: Number((2.5 * sizeScale).toFixed(2)),
+        y: 1.25,
+        z: Number((gapStart - span * 0.33).toFixed(2)),
+        w: Number((2.05 * sizeScale).toFixed(2)),
+        h: 0.32,
+        d: Number((2.15 * sizeScale).toFixed(2)),
         kind: 'bridge',
         moveAxis: 'x',
-        moveAmp: amp,
-        moveSpeed: moveSpeedBase,
+        moveAmp: Math.min(2.85, amp * 1.1),
+        moveSpeed: moveSpeedBase * 1.05,
         movePhase: 0,
       });
       platforms.push({
         x: Number(midX.toFixed(2)),
-        y: 1.65,
-        z: Number((gapStart - span * 0.51).toFixed(2)),
-        w: Number((2.0 * sizeScale).toFixed(2)),
+        y: 1.75,
+        z: Number((gapStart - span * 0.52).toFixed(2)),
+        w: Number((1.75 * sizeScale).toFixed(2)),
         h: 0.72,
-        d: Number((2.2 * sizeScale).toFixed(2)),
+        d: Number((1.95 * sizeScale).toFixed(2)),
         kind: 'pillar',
       });
       platforms.push({
         x: 0,
-        y: 1.3,
-        z: Number((gapStart - span * 0.7).toFixed(2)),
-        w: Number((2.4 * sizeScale).toFixed(2)),
-        h: 0.34,
-        d: Number((2.5 * sizeScale).toFixed(2)),
+        y: 1.38,
+        z: Number((gapStart - span * 0.71).toFixed(2)),
+        w: Number((2.05 * sizeScale).toFixed(2)),
+        h: 0.32,
+        d: Number((2.15 * sizeScale).toFixed(2)),
         kind: 'bridge',
         moveAxis: 'x',
-        moveAmp: amp,
-        moveSpeed: moveSpeedBase * 1.1,
+        moveAmp: Math.min(2.85, amp * 1.1),
+        moveSpeed: moveSpeedBase * 1.18,
         movePhase: Math.PI,
       });
       platforms.push({
         x: Number(exitX.toFixed(2)),
-        y: 0.85,
-        z: Number((gapStart - span * 0.87).toFixed(2)),
-        w: Number((2.2 * sizeScale).toFixed(2)),
+        y: 0.9,
+        z: Number((gapStart - span * 0.88).toFixed(2)),
+        w: Number((1.9 * sizeScale).toFixed(2)),
         h: 0.62,
-        d: Number((2.2 * sizeScale).toFixed(2)),
+        d: Number((1.95 * sizeScale).toFixed(2)),
         kind: 'stone',
       });
     } else if (archetype === 2) {
-      // Pattern 3: Vertical Lift & High Sky-Bridge (5 steps: stone -> rising elevator -> summit bridge -> pillar -> drop)
-      const entryX = randRange(-1.8, 1.8);
-      const liftX = THREE.MathUtils.clamp(entryX + (entryX >= 0 ? -1.8 : 1.8), -maxSafeX, maxSafeX);
-      const summitX = THREE.MathUtils.clamp(liftX + (liftX >= 0 ? -1.6 : 1.6), -maxSafeX, maxSafeX);
-      const dropX = THREE.MathUtils.clamp(summitX + randRange(-1.5, 1.5), -maxSafeX, maxSafeX);
+      // Pattern 3: Vertical Lift & High Narrow Sky-Bridge (steep climb & drop)
+      const entryX = randRange(-2.0, 2.0);
+      const liftX = THREE.MathUtils.clamp(entryX + (entryX >= 0 ? -2.0 : 2.0), -maxSafeX, maxSafeX);
+      const summitX = THREE.MathUtils.clamp(liftX + (liftX >= 0 ? -1.8 : 1.8), -maxSafeX, maxSafeX);
+      const dropX = THREE.MathUtils.clamp(summitX + randRange(-1.7, 1.7), -maxSafeX, maxSafeX);
 
       platforms.push({
         x: Number(entryX.toFixed(2)),
-        y: 0.65,
+        y: 0.68,
         z: Number((gapStart - span * 0.14).toFixed(2)),
-        w: Number((2.2 * sizeScale).toFixed(2)),
+        w: Number((1.9 * sizeScale).toFixed(2)),
         h: 0.62,
-        d: Number((2.2 * sizeScale).toFixed(2)),
+        d: Number((1.9 * sizeScale).toFixed(2)),
         kind: 'stone',
       });
       platforms.push({
         x: Number(liftX.toFixed(2)),
-        y: 1.35,
+        y: 1.45,
         z: Number((gapStart - span * 0.33).toFixed(2)),
-        w: Number((2.25 * sizeScale).toFixed(2)),
-        h: 0.38,
-        d: Number((2.35 * sizeScale).toFixed(2)),
+        w: Number((1.95 * sizeScale).toFixed(2)),
+        h: 0.36,
+        d: Number((2.05 * sizeScale).toFixed(2)),
         kind: 'bridge',
         moveAxis: 'y',
-        moveAmp: 0.58,
-        moveSpeed: moveSpeedBase * 1.05,
+        moveAmp: 0.68,
+        moveSpeed: moveSpeedBase * 1.12,
         movePhase: Math.random() * Math.PI,
       });
       platforms.push({
         x: Number(summitX.toFixed(2)),
-        y: 2.1,
+        y: 2.22,
         z: Number((gapStart - span * 0.52).toFixed(2)),
-        w: Number((1.95 * sizeScale).toFixed(2)),
-        h: 0.36,
-        d: Number((2.75 * sizeScale).toFixed(2)),
+        w: Number((1.7 * sizeScale).toFixed(2)),
+        h: 0.34,
+        d: Number((2.35 * sizeScale).toFixed(2)),
         kind: 'bridge',
       });
       platforms.push({
         x: Number(dropX.toFixed(2)),
-        y: 1.5,
+        y: 1.6,
         z: Number((gapStart - span * 0.7).toFixed(2)),
-        w: Number((2.05 * sizeScale).toFixed(2)),
+        w: Number((1.75 * sizeScale).toFixed(2)),
         h: 0.72,
-        d: Number((2.15 * sizeScale).toFixed(2)),
+        d: Number((1.9 * sizeScale).toFixed(2)),
         kind: 'pillar',
       });
       platforms.push({
-        x: Number((dropX * 0.5).toFixed(2)),
-        y: 0.82,
+        x: Number((dropX * 0.45).toFixed(2)),
+        y: 0.88,
         z: Number((gapStart - span * 0.87).toFixed(2)),
-        w: Number((2.25 * sizeScale).toFixed(2)),
+        w: Number((1.95 * sizeScale).toFixed(2)),
         h: 0.62,
-        d: Number((2.2 * sizeScale).toFixed(2)),
+        d: Number((1.95 * sizeScale).toFixed(2)),
         kind: 'stone',
       });
-    } else {
-      // Pattern 4: Split High/Low Gauntlet + Moving Central Convergence
-      const forkDist = Math.min(2.55, maxSafeX * 0.65);
-      const exitX = randRange(-1.4, 1.4);
+    } else if (archetype === 3) {
+      // Pattern 4: Split High/Low Narrow Gauntlet + Moving Central Convergence
+      const forkDist = Math.min(2.65, maxSafeX * 0.68);
+      const exitX = randRange(-1.5, 1.5);
 
       platforms.push({
         x: 0,
-        y: 0.72,
+        y: 0.74,
         z: Number((gapStart - span * 0.14).toFixed(2)),
-        w: Number((2.4 * sizeScale).toFixed(2)),
+        w: Number((2.05 * sizeScale).toFixed(2)),
         h: 0.62,
-        d: Number((2.2 * sizeScale).toFixed(2)),
+        d: Number((1.95 * sizeScale).toFixed(2)),
         kind: 'stone',
       });
-      // Left elevated narrow pillar path
       platforms.push({
         x: Number((-forkDist).toFixed(2)),
-        y: 1.38,
+        y: 1.48,
         z: Number((gapStart - span * 0.34).toFixed(2)),
-        w: Number((1.95 * sizeScale).toFixed(2)),
+        w: Number((1.7 * sizeScale).toFixed(2)),
         h: 0.75,
-        d: Number((2.35 * sizeScale).toFixed(2)),
+        d: Number((2.05 * sizeScale).toFixed(2)),
         kind: 'pillar',
       });
-      // Right vertical-bobbing bridge path
       platforms.push({
         x: Number(forkDist.toFixed(2)),
-        y: 1.05,
+        y: 1.1,
         z: Number((gapStart - span * 0.35).toFixed(2)),
-        w: Number((2.15 * sizeScale).toFixed(2)),
-        h: 0.34,
-        d: Number((2.5 * sizeScale).toFixed(2)),
+        w: Number((1.85 * sizeScale).toFixed(2)),
+        h: 0.32,
+        d: Number((2.15 * sizeScale).toFixed(2)),
         kind: 'bridge',
         moveAxis: 'y',
-        moveAmp: 0.45,
-        moveSpeed: moveSpeedBase,
+        moveAmp: 0.55,
+        moveSpeed: moveSpeedBase * 1.05,
         movePhase: 0.7,
       });
-      // Moving horizontal bridge before exit
       platforms.push({
         x: 0,
-        y: 1.48,
+        y: 1.56,
         z: Number((gapStart - span * 0.58).toFixed(2)),
-        w: Number((2.25 * sizeScale).toFixed(2)),
-        h: 0.34,
-        d: Number((2.4 * sizeScale).toFixed(2)),
+        w: Number((1.95 * sizeScale).toFixed(2)),
+        h: 0.32,
+        d: Number((2.1 * sizeScale).toFixed(2)),
         kind: 'bridge',
         moveAxis: 'x',
-        moveAmp: Math.min(2.5, forkDist),
-        moveSpeed: moveSpeedBase * 1.05,
+        moveAmp: Math.min(2.75, forkDist * 1.05),
+        moveSpeed: moveSpeedBase * 1.15,
         movePhase: Math.PI * 0.5,
       });
       platforms.push({
         x: Number(exitX.toFixed(2)),
-        y: 0.9,
-        z: Number((gapStart - span * 0.82).toFixed(2)),
-        w: Number((2.3 * sizeScale).toFixed(2)),
+        y: 0.94,
+        z: Number((gapStart - span * 0.83).toFixed(2)),
+        w: Number((2.0 * sizeScale).toFixed(2)),
         h: 0.65,
-        d: Number((2.25 * sizeScale).toFixed(2)),
+        d: Number((1.95 * sizeScale).toFixed(2)),
         kind: 'stone',
+      });
+    } else {
+      // Pattern 5: Triple Pendulum Crossing (counter-sliding bridges + central precision stone)
+      const sideSign = Math.random() < 0.5 ? 1 : -1;
+      const amp = Math.min(2.85, maxSafeX * 0.56);
+      platforms.push({
+        x: Number((sideSign * 1.8).toFixed(2)),
+        y: 0.75,
+        z: Number((gapStart - span * 0.14).toFixed(2)),
+        w: Number((1.85 * sizeScale).toFixed(2)),
+        h: 0.64,
+        d: Number((1.85 * sizeScale).toFixed(2)),
+        kind: 'pillar',
+      });
+      platforms.push({
+        x: 0,
+        y: 1.32,
+        z: Number((gapStart - span * 0.32).toFixed(2)),
+        w: Number((1.95 * sizeScale).toFixed(2)),
+        h: 0.3,
+        d: Number((2.0 * sizeScale).toFixed(2)),
+        kind: 'bridge',
+        moveAxis: 'x',
+        moveAmp: amp,
+        moveSpeed: moveSpeedBase * 1.12,
+        movePhase: 0,
+      });
+      platforms.push({
+        x: Number((-sideSign * 1.6).toFixed(2)),
+        y: 1.75,
+        z: Number((gapStart - span * 0.5).toFixed(2)),
+        w: Number((1.65 * sizeScale).toFixed(2)),
+        h: 0.75,
+        d: Number((1.85 * sizeScale).toFixed(2)),
+        kind: 'stone',
+      });
+      platforms.push({
+        x: Number((sideSign * 0.4).toFixed(2)),
+        y: 1.5,
+        z: Number((gapStart - span * 0.68).toFixed(2)),
+        w: Number((1.85 * sizeScale).toFixed(2)),
+        h: 0.3,
+        d: Number((2.0 * sizeScale).toFixed(2)),
+        kind: 'bridge',
+        moveAxis: 'y',
+        moveAmp: 0.62,
+        moveSpeed: moveSpeedBase * 1.2,
+        movePhase: Math.PI * 0.65,
+      });
+      platforms.push({
+        x: 0,
+        y: 0.96,
+        z: Number((gapStart - span * 0.86).toFixed(2)),
+        w: Number((1.85 * sizeScale).toFixed(2)),
+        h: 0.32,
+        d: Number((2.05 * sizeScale).toFixed(2)),
+        kind: 'bridge',
+        moveAxis: 'x',
+        moveAmp: amp * 0.85,
+        moveSpeed: moveSpeedBase * 1.18,
+        movePhase: Math.PI,
       });
     }
 
@@ -2339,6 +2461,7 @@ export class SamuraiGameEngine {
         magicCooldown: eSpec.isMagicBoss ? (isUltimateBoss ? 1.6 : 2.4) : 999,
         bowCooldown: eSpec.canBow ? (isUltimateBoss ? 1.4 : 2.2) : 999,
         bombCooldown: eSpec.canBombs ? (isUltimateBoss ? 2.2 : 3.8) : 999,
+        stasisCooldown: eSpec.canStasis ? 4.8 : 999,
         magicKind: 'none',
         strafeDir: Math.random() < 0.5 ? 1 : -1,
         stepTimer: 0,
@@ -2721,6 +2844,22 @@ export class SamuraiGameEngine {
     this.pushFeedback('PIOGGIA DI METEORE · ESCI DAI CERCHI ROSSI!', 'story');
   }
 
+  private castEnemyStasis(owner: ActiveEnemy): void {
+    const dur = owner.currentPhase >= 2 ? 3.2 : 2.6;
+    this.enemyStasisTimer = dur;
+    _v2.copy(owner.pos).setY(0.16);
+    this.spawnShockwave(_v2, 0xa855f7, 6.8, 0.5);
+    this.spawnShockwave(this.playerPos, 0xc084fc, 4.6, 0.44);
+    _v2.copy(this.playerPos).setY(this.playerPos.y + 1.15);
+    this.spawnSparks(_v2, 24, 0xc084fc);
+    this.audio.playSpatial('time_slow', this.playerPos, 1.18);
+    this.punchFov(3.6);
+    this.camShake = Math.max(this.camShake, 0.22);
+    this.input.rumble(0.42, 0.72, 220, 2);
+    this.spawnPopup('STASI SUBITA!', 'damage', this.playerPos, 2.25, 1.15);
+    this.pushFeedback('STASI DI KAGETSU · SEI RALLENTATO!', 'damage');
+  }
+
   private spawnBossBowVolley(owner: ActiveEnemy): void {
     const baseDx = this.playerPos.x - owner.pos.x;
     const baseDz = this.playerPos.z - owner.pos.z;
@@ -3023,13 +3162,16 @@ export class SamuraiGameEngine {
       if (this.storyTimer <= 0) this.storySubtitle = null;
     }
 
-    // Time Slow ability (3.5s duration, faster recharge with Cure & Stasi)
+    // Time Slow ability (3.5s duration) + Enemy Stasi tracking
     const cooldownRate = 1 + this.daimoku.elixirLevel * 0.08;
     if (this.timeSlowTimer > 0) {
       this.timeSlowTimer = Math.max(0, this.timeSlowTimer - dt);
     }
     if (this.parrySlowTimer > 0) {
       this.parrySlowTimer = Math.max(0, this.parrySlowTimer - dt);
+    }
+    if (this.enemyStasisTimer > 0) {
+      this.enemyStasisTimer = Math.max(0, this.enemyStasisTimer - dt);
     }
     if (this.timeSlowCooldown > 0) {
       this.timeSlowCooldown = Math.max(0, this.timeSlowCooldown - dt * cooldownRate);
@@ -3040,15 +3182,23 @@ export class SamuraiGameEngine {
       this.timeSlowTimer <= 0 &&
       this.timeSlowCooldown <= 0
     ) {
+      const shatteredEnemyStasis = this.enemyStasisTimer > 0;
+      this.enemyStasisTimer = 0;
       this.timeSlowTimer = 3.5;
       this.timeSlowCooldown = 30.0 / cooldownRate;
       this.audio.playSpatial('time_slow', this.playerPos);
       this.spawnShockwave(this.playerPos, 0x38bdf8, 6.4, 0.42);
       this.punchFov(-2.8);
-      this.pushFeedback('CRONOSTASI ATTIVA · TEMPO RALLENTATO (3.5s)', 'chrono');
+      this.pushFeedback(
+        shatteredEnemyStasis
+          ? 'STASI SPEZZATA · CRONOSTASI ATTIVA (3.5s)!'
+          : 'CRONOSTASI ATTIVA · TEMPO RALLENTATO (3.5s)',
+        'chrono',
+      );
     }
 
     const worldDt = this.timeSlowTimer > 0 || this.parrySlowTimer > 0 ? dt * 0.25 : dt;
+    const heroDt = this.enemyStasisTimer > 0 ? dt * 0.36 : dt;
 
     if (this.playerState === 'dead') {
       this.playerDeadTimer += dt;
@@ -3067,12 +3217,12 @@ export class SamuraiGameEngine {
     }
 
     this.updateParkourPlatforms(worldDt);
-    this.updatePlayer(dt, inp);
+    this.updatePlayer(heroDt, inp);
     this.updateWavesAndCheckpoints();
     this.animateCheckpoints(dt);
     this.animateInfernalPortalIdle(dt);
     this.updateEnemies(worldDt);
-    this.updateVfx(worldDt, dt);
+    this.updateVfx(worldDt, heroDt);
     this.updatePetals(worldDt);
     this.updateCamera(dt, inp);
     this.audio.updateListener(this.camera);
@@ -3657,20 +3807,17 @@ export class SamuraiGameEngine {
       this.standingColliderIdx = -1;
     }
 
-    // Recover gracefully if fallen into stream/chasm beneath parkour
+    // Falling into the stream / chasm immediately triggers Game Over
     if (this.playerPos.y < -3.4) {
-      this.playerPos.copy(this.lastSafePos);
+      this.playerHp = 0;
+      this.playerVel.set(0, 0, 0);
       this.playerVelY = 0;
-      this.isGrounded = true;
       this.standingColliderIdx = -1;
       this.playerKnockbackVel.set(0, 0, 0);
-      this.playerHp = Math.max(0, this.playerHp - 15);
-      this.audio.playSpatial('hit_flesh', this.playerPos, 0.8);
-      this.spawnPopup('-15 HP · CADUTA', 'damage', this.playerPos, 2.05, 1.05);
-      this.triggerPlayerDamageFeedback(15, null, 'fall');
-      if (this.playerHp <= 0) {
-        this.handlePlayerDeath();
-      }
+      this.enemyStasisTimer = 0;
+      this.spawnPopup('CADUTA NELL\'ABISSO', 'damage', this.playerPos, 1.8, 1.15);
+      this.pushFeedback('SEI CADUTO · GAME OVER', 'damage');
+      this.handlePlayerDeath();
     }
 
     // Sync hero rig transform & pose
@@ -3694,14 +3841,14 @@ export class SamuraiGameEngine {
       bestY = 0;
     }
 
-    // Elevated parkour platforms & moving bridges (tighter edge margin for higher precision)
+    // Elevated parkour platforms & moving bridges (tight edge margin for precision jumps)
     for (let i = 0; i < this.parkourColliders.length; i++) {
       const p = this.parkourColliders[i];
       if (
-        x >= p.minX - 0.16 &&
-        x <= p.maxX + 0.16 &&
-        z >= p.minZ - 0.16 &&
-        z <= p.maxZ + 0.16 &&
+        x >= p.minX - 0.1 &&
+        x <= p.maxX + 0.1 &&
+        z >= p.minZ - 0.1 &&
+        z <= p.maxZ + 0.1 &&
         prevY >= p.topY - 0.45
       ) {
         if (bestY === null || p.topY > bestY) {
@@ -4186,6 +4333,8 @@ export class SamuraiGameEngine {
         'TUONO',
       );
     }
+
+    this.breakCratesInRadius(this.playerPos, 4.9);
   }
 
   private performPlayerStrikeHitbox(): void {
@@ -4363,6 +4512,18 @@ export class SamuraiGameEngine {
         breaksGuard || this.attackVariant === 'light4' || this.attackVariant === 'tempest_whirl',
       );
     }
+
+    // Break nearby Daimoku Crates within Sakiro's blade arc
+    if (is360AoE) {
+      this.breakCratesInRadius(this.playerPos, reach);
+    } else {
+      _v2.set(
+        this.playerPos.x + fwdX * (reach * 0.52),
+        this.playerPos.y,
+        this.playerPos.z + fwdZ * (reach * 0.52),
+      );
+      this.breakCratesInRadius(_v2, reach * 0.62);
+    }
   }
 
   private applyHitToEnemy(
@@ -4471,6 +4632,9 @@ export class SamuraiGameEngine {
       enemy.telegraph = 'none';
       enemy.isGuarding = false;
       enemy.posture = enemy.maxPosture;
+      if (enemy.spec.canStasis && this.enemyStasisTimer > 0) {
+        this.enemyStasisTimer = 0;
+      }
       this.spawnShockwave(enemy.pos, 0xd97706, 3.2, 0.3);
       this.audio.playSpatial('guard_break', enemy.pos);
       this.spawnPopup('POSTURA SPEZZATA!', 'break', enemy.pos, 2.35, 1.05);
@@ -4485,6 +4649,9 @@ export class SamuraiGameEngine {
     enemy.telegraph = 'none';
     enemy.isGuarding = false;
     enemy.rig.bladeGlowMesh.visible = false;
+    if (enemy.spec.canStasis && this.enemyStasisTimer > 0) {
+      this.enemyStasisTimer = 0;
+    }
     _v2.copy(enemy.pos).setY(enemy.pos.y + 1.15);
     this.spawnSparks(_v2, enemy.spec.isBoss ? 28 : 16, 0xe12d39);
     this.spawnShockwave(enemy.pos, 0xe12d39, enemy.spec.isBoss ? 4.4 : 2.5, 0.38);
@@ -4687,6 +4854,7 @@ export class SamuraiGameEngine {
       if (e.spec.isMagicBoss && e.magicCooldown > 0) e.magicCooldown -= dt;
       if (e.spec.canBow && e.bowCooldown > 0) e.bowCooldown -= dt;
       if (e.spec.canBombs && e.bombCooldown > 0) e.bombCooldown -= dt;
+      if (e.spec.canStasis && e.stasisCooldown > 0) e.stasisCooldown -= dt;
 
       if (e.state === 'stagger') {
         e.stateTimer -= dt;
@@ -4709,17 +4877,20 @@ export class SamuraiGameEngine {
             ? 0xe12d39
             : e.telegraph === 'magic'
               ? 0x8b5cf6
-              : e.telegraph === 'bow'
-                ? 0xfbbf24
-                : e.telegraph === 'bomb'
-                  ? 0xf97316
-                  : 0xf59e0b,
+              : e.telegraph === 'stasis'
+                ? 0xa855f7
+                : e.telegraph === 'bow'
+                  ? 0xfbbf24
+                  : e.telegraph === 'bomb'
+                    ? 0xf97316
+                    : 0xf59e0b,
         );
 
         if (e.telegraph === 'unblockable') {
           unblockableTarget = e;
         } else if (
           e.telegraph === 'magic' ||
+          e.telegraph === 'stasis' ||
           e.telegraph === 'bow' ||
           e.telegraph === 'bomb'
         ) {
@@ -4731,6 +4902,7 @@ export class SamuraiGameEngine {
         if (e.stateTimer <= 0) {
           if (
             e.telegraph === 'magic' ||
+            e.telegraph === 'stasis' ||
             e.telegraph === 'bow' ||
             e.telegraph === 'bomb'
           ) {
@@ -4742,6 +4914,8 @@ export class SamuraiGameEngine {
               this.spawnBossBowVolley(e);
             } else if (e.magicKind === 'bombs') {
               this.spawnBossBombs(e);
+            } else if (e.magicKind === 'stasis') {
+              this.castEnemyStasis(e);
             }
             e.magicKind = 'none';
             e.telegraph = 'none';
@@ -4796,8 +4970,31 @@ export class SamuraiGameEngine {
         e.yaw = this.dampAngle(e.yaw, targetYaw, 9, dt);
         const engageRange = e.spec.isBoss ? 3.15 : 2.5;
 
-        // Kagetsu Bow Shot (fast high-velocity arrows)
-        if (e.spec.canBow && e.bowCooldown <= 0 && dist > 3.2 && dist < 26 && this.playerState !== 'dead') {
+        // Kagetsu Temporal Stasi Curse against Sakiro
+        if (
+          e.spec.canStasis &&
+          e.stasisCooldown <= 0 &&
+          this.enemyStasisTimer <= 0 &&
+          dist < 24 &&
+          this.playerState !== 'dead'
+        ) {
+          e.state = 'windup';
+          e.telegraph = 'stasis';
+          e.magicKind = 'stasis';
+          e.windupDuration = e.currentPhase >= 2 ? 0.56 : 0.68;
+          e.stateTimer = e.windupDuration;
+          e.comboRemaining = 0;
+          e.isGuarding = false;
+          e.stasisCooldown = e.currentPhase >= 2 ? 9.5 : 12.0;
+          this.audio.playSpatial('magic_cast', e.pos, 1.2);
+          this.pushFeedback('KAGETSU INVOCA LA STASI!', 'story');
+        } else if (
+          e.spec.canBow &&
+          e.bowCooldown <= 0 &&
+          dist > 3.2 &&
+          dist < 26 &&
+          this.playerState !== 'dead'
+        ) {
           e.state = 'windup';
           e.telegraph = 'bow';
           e.magicKind = 'bow';
@@ -4805,14 +5002,14 @@ export class SamuraiGameEngine {
           e.stateTimer = e.windupDuration;
           e.comboRemaining = 0;
           e.isGuarding = false;
-              e.bowCooldown =
-                e.totalPhases >= 3
-                  ? e.currentPhase >= 3
-                    ? 1.9
-                    : 2.4
-                  : e.currentPhase >= 2
-                    ? 2.8
-                    : 3.6;
+          e.bowCooldown =
+            e.totalPhases >= 3
+              ? e.currentPhase >= 3
+                ? 1.9
+                : 2.4
+              : e.currentPhase >= 2
+                ? 2.8
+                : 3.6;
           this.audio.playSpatial('telegraph_normal', e.pos, 1.1);
         } else if (
           e.spec.canBombs &&
@@ -6038,6 +6235,10 @@ export class SamuraiGameEngine {
         }
       }
 
+      if (this.breakCratesInRadius(proj.pos, 1.35)) {
+        // Cross slash slices straight through Daimoku crates
+      }
+
       if (proj.distTraveled >= proj.maxDist) {
         this.vfxGroup.remove(proj.group);
         proj.group.traverse((child) => {
@@ -6096,6 +6297,8 @@ export class SamuraiGameEngine {
           this.spawnShockwave(enemy.pos, 0x38bdf8, 2.8, 0.25);
         }
       }
+
+      this.breakCratesInRadius(proj.pos, 1.55);
 
       if (proj.distTraveled >= proj.maxDist) {
         this.vfxGroup.remove(proj.group);
@@ -6394,6 +6597,9 @@ export class SamuraiGameEngine {
             break;
           }
         }
+        if (!consumed && this.breakCratesInRadius(arr.pos, 1.05)) {
+          consumed = true;
+        }
       }
 
       if (consumed) {
@@ -6494,13 +6700,23 @@ export class SamuraiGameEngine {
           this.orbGainPopupTimer = 0.35;
         }
         this.audio.playSpatial('orb_pickup', _v1, 0.9);
-        this.spawnSparks(_v1, 5, 0x38bdf8);
+        this.spawnSparks(_v1, 5, 0xffffff);
 
         this.vfxGroup.remove(orb.group);
         orb.coreMat.dispose();
         orb.haloMat.dispose();
         this.energyOrbs.splice(i, 1);
       }
+    }
+
+    // Animate unbroken Daimoku Crates white spirit crest & orbiting ring
+    for (let i = 0; i < this.crates.length; i++) {
+      const c = this.crates[i];
+      if (c.broken) continue;
+      c.crate.orbCrest.rotation.y += heroDt * 2.1;
+      c.crate.orbCrest.position.y = 1.32 + Math.sin(this.elapsed * 3.2 + i) * 0.06;
+      c.crate.haloRing.rotation.z -= heroDt * 2.4;
+      c.crate.haloRing.position.y = c.crate.orbCrest.position.y;
     }
 
     const locked = this.getLockedEnemy();
@@ -6515,16 +6731,83 @@ export class SamuraiGameEngine {
     this.updateSparks(heroDt);
   }
 
-  private spawnEnemyEnergyOrbs(enemy: ActiveEnemy): void {
-    const isBoss = Boolean(enemy.spec.isBoss);
-    const totalEnergy = isBoss
-      ? 90 + this.currentLevelIndex * 20
-      : enemy.spec.archetype === 'enforcer'
-        ? 28 + this.currentLevelIndex * 3
-        : enemy.spec.archetype === 'ronin' || enemy.spec.archetype === 'shinobi'
-          ? 20 + this.currentLevelIndex * 2
-          : 16 + this.currentLevelIndex * 2;
-    const orbCount = isBoss ? 11 : enemy.spec.archetype === 'enforcer' ? 5 : 4;
+  private spawnDaimokuCrateAt(
+    id: string,
+    x: number,
+    y: number,
+    z: number,
+    totalEnergy: number,
+    orbsCount: number,
+  ): void {
+    const crate = createDaimokuCrate(this.mats);
+    crate.group.position.set(x, y, z);
+    crate.group.rotation.y = ((id.length * 0.37) % 0.6) - 0.3;
+    this.vfxGroup.add(crate.group);
+    this.crates.push({
+      id,
+      crate,
+      pos: new THREE.Vector3(x, y, z),
+      radius: 1.08,
+      orbsCount,
+      totalEnergy,
+      broken: false,
+    });
+  }
+
+  private disposeCrateObject(crate: DaimokuCrateObj): void {
+    this.vfxGroup.remove(crate.group);
+    crate.group.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh;
+        mesh.geometry?.dispose();
+        const mat = mesh.material;
+        if (Array.isArray(mat)) {
+          mat.forEach((m) => {
+            if (m !== this.mats.enemyGoldTrim) m.dispose();
+          });
+        } else if (mat && mat !== this.mats.enemyGoldTrim) {
+          mat.dispose();
+        }
+      }
+    });
+  }
+
+  private breakCratesInRadius(center: THREE.Vector3, radius: number): boolean {
+    let brokeAny = false;
+    for (let i = this.crates.length - 1; i >= 0; i--) {
+      const c = this.crates[i];
+      if (c.broken) continue;
+      const dx = c.pos.x - center.x;
+      const dz = c.pos.z - center.z;
+      const dy = Math.abs(c.pos.y - center.y);
+      const hitRad = radius + c.radius;
+      if (dx * dx + dz * dz <= hitRad * hitRad && dy <= 2.4) {
+        c.broken = true;
+        brokeAny = true;
+        this.disposeCrateObject(c.crate);
+        this.crates.splice(i, 1);
+
+        _v2.set(c.pos.x, c.pos.y + 0.65, c.pos.z);
+        this.spawnSparks(_v2, 14, 0xd97706);
+        this.spawnSparks(_v2, 12, 0xffffff);
+        _v2.set(c.pos.x, c.pos.y + 0.14, c.pos.z);
+        this.spawnShockwave(_v2, 0xffffff, 3.0, 0.32);
+        this.audio.playSpatial('guard_break', c.pos, 0.95);
+        this.camShake = Math.max(this.camShake, 0.1);
+        this.input.rumble(0.28, 0.45, 95, 1);
+        this.spawnPopup(`+${c.totalEnergy} DAIMOKU`, 'parry', c.pos, 1.85, 1.0);
+        this.spawnEnergyOrbCluster(c.pos, c.totalEnergy, c.orbsCount, 0.72);
+      }
+    }
+    return brokeAny;
+  }
+
+  private spawnEnergyOrbCluster(
+    origin: THREE.Vector3,
+    totalEnergy: number,
+    orbCount: number,
+    startYOffset = 1.05,
+  ): void {
     const baseVal = Math.floor(totalEnergy / orbCount);
     let remainder = totalEnergy - baseVal * orbCount;
 
@@ -6532,14 +6815,14 @@ export class SamuraiGameEngine {
       const val = baseVal + (remainder > 0 ? 1 : 0);
       if (remainder > 0) remainder -= 1;
 
-      const isGold = isBoss || i === 0;
+      // Pure luminous white Daimoku spheres ("palle bianche")
       const coreMat = new THREE.MeshBasicMaterial({
-        color: isGold ? 0xfef08a : 0xe0f2fe,
+        color: 0xffffff,
       });
       const haloMat = new THREE.MeshBasicMaterial({
-        color: isGold ? 0xf59e0b : 0x38bdf8,
+        color: 0xf8fafc,
         transparent: true,
-        opacity: 0.56,
+        opacity: 0.72,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       });
@@ -6550,9 +6833,9 @@ export class SamuraiGameEngine {
       group.add(core, halo);
 
       const pos = new THREE.Vector3(
-        enemy.pos.x + (Math.random() - 0.5) * 0.5,
-        enemy.pos.y + 1.05 + Math.random() * 0.4,
-        enemy.pos.z + (Math.random() - 0.5) * 0.5,
+        origin.x + (Math.random() - 0.5) * 0.5,
+        origin.y + startYOffset + Math.random() * 0.4,
+        origin.z + (Math.random() - 0.5) * 0.5,
       );
       group.position.copy(pos);
       this.vfxGroup.add(group);
@@ -6577,6 +6860,19 @@ export class SamuraiGameEngine {
         maxLife: 4.5,
       });
     }
+  }
+
+  private spawnEnemyEnergyOrbs(enemy: ActiveEnemy): void {
+    const isBoss = Boolean(enemy.spec.isBoss);
+    const totalEnergy = isBoss
+      ? 90 + this.currentLevelIndex * 20
+      : enemy.spec.archetype === 'enforcer'
+        ? 28 + this.currentLevelIndex * 3
+        : enemy.spec.archetype === 'ronin' || enemy.spec.archetype === 'shinobi'
+          ? 20 + this.currentLevelIndex * 2
+          : 16 + this.currentLevelIndex * 2;
+    const orbCount = isBoss ? 11 : enemy.spec.archetype === 'enforcer' ? 5 : 4;
+    this.spawnEnergyOrbCluster(enemy.pos, totalEnergy, orbCount, 1.05);
   }
 
   private absorbAllRemainingOrbs(): void {
@@ -6848,6 +7144,8 @@ export class SamuraiGameEngine {
       timeSlowUnlocked: this.timeSlowUnlocked,
       timeSlowActive: this.timeSlowTimer > 0,
       parrySlowActive: this.parrySlowTimer > 0,
+      enemyStasisActive: this.enemyStasisTimer > 0,
+      enemyStasisRemaining: Number(this.enemyStasisTimer.toFixed(1)),
       timeSlowRemaining: Number(this.timeSlowTimer.toFixed(1)),
       timeSlowCooldown: Math.ceil(this.timeSlowCooldown),
       bowUnlocked: this.bowUnlocked,

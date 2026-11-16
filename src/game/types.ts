@@ -19,6 +19,7 @@ export type EffectsDensity = 'low' | 'normal' | 'high';
 export interface VideoSettings {
   qualityPreset: QualityPreset;
   fov: number;
+  hudScale: number;
   shadowQuality: ShadowQuality;
   renderScale: RenderScale;
   effectsDensity: EffectsDensity;
@@ -33,7 +34,7 @@ export interface AudioSettings {
 
 export type EnemyArchetype = 'ronin' | 'shinobi' | 'enforcer' | 'boss';
 
-export type TelegraphType = 'none' | 'normal' | 'unblockable' | 'magic' | 'bow' | 'bomb';
+export type TelegraphType = 'none' | 'normal' | 'unblockable' | 'magic' | 'bow' | 'bomb' | 'stasis';
 
 export type SecretComboId =
   | 'crimson_cross'
@@ -105,6 +106,7 @@ export interface EnemySpawnSpec {
   isMagicBoss?: boolean;
   canBow?: boolean;
   canBombs?: boolean;
+  canStasis?: boolean;
   phases?: number;
 }
 
@@ -202,6 +204,8 @@ export interface HudSnapshot {
   timeSlowUnlocked: boolean;
   timeSlowActive: boolean;
   parrySlowActive?: boolean;
+  enemyStasisActive?: boolean;
+  enemyStasisRemaining?: number;
   timeSlowRemaining: number;
   timeSlowCooldown: number;
   bowUnlocked: boolean;

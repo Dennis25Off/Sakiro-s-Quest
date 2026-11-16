@@ -33,6 +33,7 @@ interface StartMenuProps {
   binauralEnabled: boolean;
   showControlsGuide: boolean;
   introPlaying: boolean;
+  isFullscreen: boolean;
   onContinue: () => void;
   onNewGame: () => void;
   onReplayIntro: () => void;
@@ -40,6 +41,7 @@ interface StartMenuProps {
   onChangeVideo: (next: VideoSettings) => void;
   onChangeAudio: (opts: { volume?: number; muted?: boolean; binaural?: boolean }) => void;
   onToggleControlsGuide: () => void;
+  onToggleFullscreen: () => void;
   onPreviewLevel: (levelIndex: number) => void;
 }
 
@@ -53,6 +55,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
   binauralEnabled,
   showControlsGuide,
   introPlaying,
+  isFullscreen,
   onContinue,
   onNewGame,
   onReplayIntro,
@@ -60,6 +63,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
   onChangeVideo,
   onChangeAudio,
   onToggleControlsGuide,
+  onToggleFullscreen,
   onPreviewLevel,
 }) => {
   const [activeTab, setActiveTab] = useState<MenuTab>('story');
@@ -245,7 +249,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
             </span>
           </div>
           <div className="flex items-center justify-between">
-            <span>Tema Intro</span>
+            <span>Musica &amp; Sottofondo</span>
             <button
               type="button"
               data-gp-item
@@ -527,6 +531,7 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                                 id,
                                 videoSettings.fov,
                                 videoSettings.cameraShake,
+                                videoSettings.hudScale,
                               ),
                             )
                           }
@@ -669,6 +674,63 @@ export const StartMenu: React.FC<StartMenuProps> = ({
                         </button>
                       ))}
                     </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-[#0F172A]/12 flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-medium text-[#0F172A]">
+                        Dimensione HUD
+                      </p>
+                      <p className="text-xs text-[#475569]">
+                        Ridimensiona insieme tutti gli elementi dell&apos;interfaccia in gioco
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono-nums text-xs font-bold text-[#0F172A] w-10 text-right">
+                        {Math.round(videoSettings.hudScale * 100)}%
+                      </span>
+                      <input
+                        type="range"
+                        data-gp-item
+                        data-gp-group="right"
+                        min={0.75}
+                        max={1.25}
+                        step={0.05}
+                        value={videoSettings.hudScale}
+                        onChange={(e) =>
+                          onChangeVideo({
+                            ...videoSettings,
+                            hudScale: Number(e.target.value),
+                          })
+                        }
+                        className="w-36 accent-[#E12D39] cursor-pointer"
+                        aria-label="Dimensione HUD"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-[#0F172A]/12 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium text-[#0F172A]">
+                        Schermo Intero
+                      </p>
+                      <p className="text-xs text-[#475569]">
+                        Passa tra visualizzazione a schermo intero o finestra
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      data-gp-item
+                      data-gp-group="right"
+                      onClick={onToggleFullscreen}
+                      className={`px-3.5 py-1.5 text-xs font-bold bg-transparent border cursor-pointer transition-all ${
+                        isFullscreen
+                          ? 'border-[#0284C7] text-[#0284C7]'
+                          : 'border-[#0F172A]/35 text-[#334155] hover:border-[#0F172A]'
+                      }`}
+                    >
+                      {isFullscreen ? 'Attivo' : 'Finestra'}
+                    </button>
                   </div>
 
                   <div className="pt-2 border-t border-[#0F172A]/12 flex items-center justify-between">
